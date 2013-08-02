@@ -290,16 +290,18 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         }
 
         plainBootstrap.handler(createPlainPipelineFactory());
+        // FIXME
         // DefaultChannelFuture.setUseDeadLockChecker(false);
 
         if (asyncHttpProviderConfig != null) {
             executeConnectAsync = asyncHttpProviderConfig.isAsyncConnect();
             if (!executeConnectAsync) {
+                // FIXME
                 // DefaultChannelFuture.setUseDeadLockChecker(true);
             }
         }
 
-        webSocketBootstrap.handler(new ChannelInitializer() {
+        webSocketBootstrap.handler(new ChannelInitializer<Channel>() {
             /* @Override */
             protected void initChannel(Channel ch) throws Exception {
                 ChannelPipeline pipeline = ch.pipeline();
@@ -322,7 +324,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
     protected ChannelInitializer<Channel> createPlainPipelineFactory() {
         return new ChannelInitializer<Channel>() {
 
-            /* @Override */
+            @Override
             protected void initChannel(Channel ch) throws Exception {
                 ChannelPipeline pipeline = ch.pipeline();
 
@@ -341,10 +343,11 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         };
     }
 
-    void constructSSLPipeline(final NettyConnectListener cl) {
+    <T> void constructSSLPipeline(final NettyConnectListener<T> cl) {
 
         secureBootstrap.handler(new ChannelInitializer<Channel>() {
-            /* @Override */
+
+            @Override
             protected void initChannel(Channel ch) throws Exception {
                 ChannelPipeline pipeline = ch.pipeline();
 
@@ -366,7 +369,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
         secureWebSocketBootstrap.handler(new ChannelInitializer<Channel>() {
 
-            /* @Override */
+            @Override
             protected void initChannel(Channel ch) throws Exception {
                 ChannelPipeline pipeline = ch.pipeline();
 
@@ -834,7 +837,12 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 }
             }
         }
-        return new DefaultFullHttpRequest(httpVersion, m, requestUri, content != null? content: Unpooled.buffer(0));
+
+        FullHttpRequest nettyRequest = new DefaultFullHttpRequest(httpVersion, m, requestUri, content != null? content: Unpooled.buffer(0));
+        for (Entry<String, Object> header: headers.entrySet()) {
+            nettyRequest.headers().set(header.getKey(), header.getValue());
+        }
+        return nettyRequest;
     }
 
     public void close() {
@@ -979,7 +987,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             }
         }
 
-        NettyConnectListener<T> c = new NettyConnectListener.Builder(config, request, asyncHandler, f, this, bufferedBytes).build(uri);
+        NettyConnectListener<T> c = new NettyConnectListener.Builder<T>(config, request, asyncHandler, f, this, bufferedBytes).build(uri);
         boolean avoidProxy = ProxyUtils.avoidProxy(proxyServer, uri.getHost());
 
         if (useSSl) {
