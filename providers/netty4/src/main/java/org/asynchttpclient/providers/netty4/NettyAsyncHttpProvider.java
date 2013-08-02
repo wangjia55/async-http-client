@@ -41,6 +41,8 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.channel.socket.oio.OioSocketChannel;
 import io.netty.handler.codec.PrematureChannelClosureException;
 import io.netty.handler.codec.http.DefaultFullHttpRequest;
+import io.netty.handler.codec.http.DefaultHttpContent;
+import io.netty.handler.codec.http.DefaultLastHttpContent;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpClientCodec;
@@ -49,8 +51,6 @@ import io.netty.handler.codec.http.HttpContentCompressor;
 import io.netty.handler.codec.http.HttpContentDecompressor;
 import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.codec.http.HttpMethod;
-import io.netty.handler.codec.http.HttpObject;
-import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpRequestEncoder;
 import io.netty.handler.codec.http.HttpResponse;
 import io.netty.handler.codec.http.HttpResponseDecoder;
@@ -319,8 +319,8 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         }
     }
 
-    protected ChannelInitializer createPlainPipelineFactory() {
-        return new ChannelInitializer() {
+    protected ChannelInitializer<Channel> createPlainPipelineFactory() {
+        return new ChannelInitializer<Channel>() {
 
             /* @Override */
             protected void initChannel(Channel ch) throws Exception {
@@ -343,7 +343,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
     void constructSSLPipeline(final NettyConnectListener cl) {
 
-        secureBootstrap.handler(new ChannelInitializer() {
+        secureBootstrap.handler(new ChannelInitializer<Channel>() {
             /* @Override */
             protected void initChannel(Channel ch) throws Exception {
                 ChannelPipeline pipeline = ch.pipeline();
@@ -364,7 +364,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             }
         });
 
-        secureWebSocketBootstrap.handler(new ChannelInitializer() {
+        secureWebSocketBootstrap.handler(new ChannelInitializer<Channel>() {
 
             /* @Override */
             protected void initChannel(Channel ch) throws Exception {
@@ -1014,7 +1014,9 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             return c.future();
         }
 
-        boolean directInvokation = !(IN_IO_THREAD.get() && DefaultChannelFuture.isUseDeadLockChecker());
+        // FIXME
+//        boolean directInvokation = !(IN_IO_THREAD.get() && DefaultChannelFuture.isUseDeadLockChecker());
+        boolean directInvokation = !IN_IO_THREAD.get();
 
         if (directInvokation && !asyncConnect && request.getFile() == null) {
             int timeOut = config.getConnectionTimeoutInMs() > 0 ? config.getConnectionTimeoutInMs() : Integer.MAX_VALUE;
@@ -1980,7 +1982,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         }
                     };
 
-                    if (response.isChunked()) {
+                    if (HttpHeaders.isTransferEncodingChunked(response)) {
                         // We must make sure there is no bytes left before executing the next request.
                         ctx.attr(DEFAULT_ATTRIBUTE).set(ac);
                     } else {
@@ -2090,7 +2092,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                             }
                         };
 
-                        if (future.isKeepAlive() && response.isChunked()) {
+                        if (future.isKeepAlive() && HttpHeaders.isTransferEncodingChunked(response)) {
                             // We must make sure there is no bytes left before executing the next request.
                             ctx.attr(DEFAULT_ATTRIBUTE).set(ac);
                         } else {
@@ -2156,12 +2158,12 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         return;
 
                     if (!future.getAndSetStatusReceived(true) && updateStatusAndInterrupt(handler, status)) {
-                        finishUpdate(future, ctx, response.isChunked());
+                        finishUpdate(future, ctx, HttpHeaders.isTransferEncodingChunked(response));
                         return;
                     } else if (updateHeadersAndInterrupt(handler, responseHeaders)) {
-                        finishUpdate(future, ctx, response.isChunked());
+                        finishUpdate(future, ctx, HttpHeaders.isTransferEncodingChunked(response));
                         return;
-                    } else if (!response.isChunked()) {
+                    } else if (!HttpHeaders.isTransferEncodingChunked(response)) {
                         if (response.content().readableBytes() != 0) {
                             updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), response, NettyAsyncHttpProvider.this, true));
                         }
@@ -2175,14 +2177,14 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         drainChannel(ctx, future);
                     }
 
-                } else if (e instanceof HttpContent) {
-                    HttpContent chunk = (HttpContent) e;
+                } else if (e instanceof DefaultHttpContent) {
+                    DefaultHttpContent chunk = (DefaultHttpContent) e;
 
                     if (handler != null) {
                         boolean last = chunk instanceof LastHttpContent;
                         if (last || updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), null, NettyAsyncHttpProvider.this, chunk, false))) {
-                            if (chunk instanceof DefaultHttpChunkTrailer) {
-                                updateHeadersAndInterrupt(handler, new ResponseHeaders(future.getURI(), future.getHttpResponse(), NettyAsyncHttpProvider.this, (HttpChunkTrailer) chunk));
+                            if (chunk instanceof DefaultLastHttpContent) {
+                                updateHeadersAndInterrupt(handler, new ResponseHeaders(future.getURI(), future.getHttpResponse(), NettyAsyncHttpProvider.this, (DefaultLastHttpContent) chunk));
                             }
                             finishUpdate(future, ctx, !last);
                         }
@@ -2317,27 +2319,9 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     pendingOpcode = OPCODE_BINARY;
                 }
 
-                HttpChunk webSocketChunk = new HttpChunk() {
-                    private ByteBuf content;
 
-                    // @Override
-                    public boolean isLast() {
-                        return false;
-                    }
-
-                    // @Override
-                    public ByteBuf getContent() {
-                        return content;
-                    }
-
-                    // @Override
-                    public void setContent(ByteBuf content) {
-                        this.content = content;
-                    }
-                };
-
-                if (frame.getBinaryData() != null) {
-                    webSocketChunk.setContent(Unpooled.wrappedBuffer(frame.getBinaryData()));
+                if (frame.content() != null) {
+                    HttpContent webSocketChunk = new DefaultHttpContent(Unpooled.wrappedBuffer(frame.content()));
                     ResponseBodyPart rp = new ResponseBodyPart(future.getURI(), null, NettyAsyncHttpProvider.this, webSocketChunk, true);
                     h.onBodyPartReceived(rp);
 
@@ -2347,7 +2331,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         if (pendingOpcode == OPCODE_BINARY) {
                             webSocket.onBinaryFragment(rp.getBodyPartBytes(), frame.isFinalFragment());
                         } else {
-                            webSocket.onTextFragment(frame.getBinaryData().toString(UTF8), frame.isFinalFragment());
+                            webSocket.onTextFragment(frame.content().toString(UTF8), frame.isFinalFragment());
                         }
 
                         if (frame instanceof CloseWebSocketFrame) {
