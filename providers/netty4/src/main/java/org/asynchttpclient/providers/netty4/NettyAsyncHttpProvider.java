@@ -863,7 +863,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             config.executorService().shutdown();
             config.reaper().shutdown();
             if (this.allowReleaseSocketChannelFactory) {
-            	eventLoop.shutdown();
+            	eventLoop.shutdownGracefully();
             }
         } catch (Throwable t) {
             log.warn("Unexpected error on close", t);
