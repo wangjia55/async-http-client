@@ -12,48 +12,59 @@
  */
 package org.asynchttpclient.providers.netty_4;
 
-import org.asynchttpclient.RandomAccessBody;
-import io.netty.buffer.AbstractReferenceCounted;
-import io.netty.buffer.ReferenceCounted;
 import io.netty.channel.FileRegion;
+import io.netty.util.AbstractReferenceCounted;
 
 import java.io.IOException;
 import java.nio.channels.WritableByteChannel;
 
+import org.asynchttpclient.RandomAccessBody;
+
 /**
  * Adapts a {@link RandomAccessBody} to Netty's {@link FileRegion}.
  */
-class BodyFileRegion
-        extends AbstractReferenceCounted
-        implements FileRegion {
+class BodyFileRegion extends AbstractReferenceCounted implements FileRegion {
 
-    private final RandomAccessBody body;
+	private final RandomAccessBody body;
+	private long transfered;
 
-    public BodyFileRegion(RandomAccessBody body) {
-        if (body == null) {
-            throw new IllegalArgumentException("no body specified");
-        }
-        this.body = body;
-    }
+	public BodyFileRegion(RandomAccessBody body) {
+		if (body == null) {
+			throw new IllegalArgumentException("no body specified");
+		}
+		this.body = body;
+	}
 
-    public long position() {
-        return 0;
-    }
+	@Override
+	public long position() {
+		return 0;
+	}
 
-    public long count() {
-        return body.getContentLength();
-    }
+	@Override
+	public long count() {
+		return body.getContentLength();
+	}
 
-    public long transferTo(WritableByteChannel target, long position)
-            throws IOException {
-        return body.transferTo(position, Long.MAX_VALUE, target);
-    }
+	@Override
+	public long transfered() {
+		return transfered;
+	}
 
-    public void deallocate() {
-        try {
-            body.close();
-        } catch (IOException e) {
-            // we tried
-        }
-    }
+	@Override
+	public long transferTo(WritableByteChannel target, long position) throws IOException {
+		long written = body.transferTo(position, Long.MAX_VALUE, target);
+		if (written > 0) {
+			transfered += written;
+		}
+		return written;
+	}
+
+	@Override
+	protected void deallocate() {
+		try {
+			body.close();
+		} catch (IOException e) {
+			// we tried
+		}
+	}
 }

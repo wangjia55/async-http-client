@@ -15,6 +15,88 @@
  */
 package org.asynchttpclient.providers.netty_4;
 
+import static org.asynchttpclient.util.AsyncHttpProviderUtils.DEFAULT_CHARSET;
+import static org.asynchttpclient.util.MiscUtil.isNonEmpty;
+import io.netty.bootstrap.Bootstrap;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufOutputStream;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.ChannelPipeline;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.FileRegion;
+import io.netty.channel.group.ChannelGroup;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.oio.OioEventLoopGroup;
+import io.netty.channel.socket.SocketChannel;
+import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.channel.socket.oio.OioSocketChannel;
+import io.netty.handler.codec.http.DefaultCookie;
+import io.netty.handler.codec.http.DefaultFullHttpRequest;
+import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.FullHttpResponse;
+import io.netty.handler.codec.http.HttpClientCodec;
+import io.netty.handler.codec.http.HttpContent;
+import io.netty.handler.codec.http.HttpContentCompressor;
+import io.netty.handler.codec.http.HttpContentDecompressor;
+import io.netty.handler.codec.http.HttpHeaders;
+import io.netty.handler.codec.http.HttpMethod;
+import io.netty.handler.codec.http.HttpObject;
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.HttpRequestEncoder;
+import io.netty.handler.codec.http.HttpResponse;
+import io.netty.handler.codec.http.HttpResponseDecoder;
+import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
+import io.netty.handler.codec.http.websocketx.WebSocket08FrameDecoder;
+import io.netty.handler.codec.http.websocketx.WebSocket08FrameEncoder;
+import io.netty.handler.codec.http.websocketx.WebSocketFrame;
+import io.netty.handler.ssl.SslHandler;
+import io.netty.handler.stream.ChunkedFile;
+import io.netty.handler.stream.ChunkedWriteHandler;
+import io.netty.util.AbstractReferenceCounted;
+import io.netty.util.AttributeKey;
+import io.netty.util.concurrent.GenericProgressiveFutureListener;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.lang.reflect.Field;
+import java.net.ConnectException;
+import java.net.InetSocketAddress;
+import java.net.MalformedURLException;
+import java.net.URI;
+import java.nio.channels.ClosedChannelException;
+import java.nio.channels.FileChannel;
+import java.nio.channels.WritableByteChannel;
+import java.nio.charset.Charset;
+import java.security.GeneralSecurityException;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import javax.net.ssl.SSLEngine;
+
 import org.asynchttpclient.AsyncHandler;
 import org.asynchttpclient.AsyncHandler.STATE;
 import org.asynchttpclient.AsyncHttpClientConfig;
@@ -43,105 +125,25 @@ import org.asynchttpclient.filter.IOExceptionFilter;
 import org.asynchttpclient.filter.ResponseFilter;
 import org.asynchttpclient.generators.InputStreamBodyGenerator;
 import org.asynchttpclient.listener.TransferCompletionHandler;
-import org.asynchttpclient.ntlm.NTLMEngine;
-import org.asynchttpclient.ntlm.NTLMEngineException;
-import org.asynchttpclient.providers.netty_4.FeedableBodyGenerator.FeedListener;
-import org.asynchttpclient.providers.netty_4.spnego.SpnegoEngine;
-import org.asynchttpclient.providers.netty_4.spnego.SpnegoEngine;
-import org.asynchttpclient.websocket.WebSocketUpgradeHandler;
 import org.asynchttpclient.multipart.MultipartBody;
 import org.asynchttpclient.multipart.MultipartRequestEntity;
+import org.asynchttpclient.ntlm.NTLMEngine;
+import org.asynchttpclient.ntlm.NTLMEngineException;
+import org.asynchttpclient.org.jboss.netty.handler.codec.http.CookieEncoder;
+import org.asynchttpclient.providers.netty_4.FeedableBodyGenerator.FeedListener;
+import org.asynchttpclient.providers.netty_4.spnego.SpnegoEngine;
+import org.asynchttpclient.providers.netty_4.util.CleanupChannelGroup;
 import org.asynchttpclient.util.AsyncHttpProviderUtils;
 import org.asynchttpclient.util.AuthenticatorUtils;
-import org.asynchttpclient.providers.netty_4.util.CleanupChannelGroup;
 import org.asynchttpclient.util.ProxyUtils;
 import org.asynchttpclient.util.SslUtils;
 import org.asynchttpclient.util.UTF8UrlEncoder;
-import io.netty.bootstrap.Bootstrap;
-import io.netty.buffer.AbstractReferenceCounted;
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufOutputStream;
-import io.netty.buffer.Unpooled;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundMessageHandlerAdapter;
-import io.netty.channel.ChannelPipeline;
-import io.netty.channel.FileRegion;
-import io.netty.channel.group.ChannelGroup;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelOption;
-import io.netty.channel.EventLoopGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.oio.OioEventLoopGroup;
-import io.netty.channel.socket.SocketChannel;
-import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.channel.socket.oio.OioSocketChannel;
-import io.netty.handler.codec.http.DefaultFullHttpRequest;
-import io.netty.handler.codec.http.FullHttpRequest;
-import io.netty.handler.codec.http.FullHttpResponse;
-import io.netty.handler.codec.http.HttpContent;
-import io.netty.handler.codec.http.HttpObject;
-import io.netty.handler.codec.http.DefaultCookie;
-import io.netty.handler.codec.http.HttpClientCodec;
-import io.netty.handler.codec.http.HttpContentCompressor;
-import io.netty.handler.codec.http.HttpContentDecompressor;
-import io.netty.handler.codec.http.HttpHeaders;
-import io.netty.handler.codec.http.HttpMethod;
-import io.netty.handler.codec.http.HttpRequest;
-import io.netty.handler.codec.http.HttpRequestEncoder;
-import io.netty.handler.codec.http.HttpResponse;
-import io.netty.handler.codec.http.HttpResponseDecoder;
-import io.netty.handler.codec.http.HttpVersion;
-import io.netty.handler.codec.http.websocketx.BinaryWebSocketFrame;
-import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
-import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
-import io.netty.handler.codec.http.websocketx.WebSocket08FrameDecoder;
-import io.netty.handler.codec.http.websocketx.WebSocket08FrameEncoder;
-import io.netty.handler.codec.http.websocketx.WebSocketFrame;
-import io.netty.handler.ssl.SslHandler;
-import io.netty.handler.stream.ChunkedFile;
-import io.netty.handler.stream.ChunkedWriteHandler;
-import io.netty.util.AttributeKey;
+import org.asynchttpclient.websocket.WebSocketUpgradeHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.net.ssl.SSLEngine;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.net.ConnectException;
-import java.net.InetSocketAddress;
-import java.net.MalformedURLException;
-import java.net.URI;
-import java.lang.reflect.Field;
-import java.nio.channels.ClosedChannelException;
-import java.nio.channels.FileChannel;
-import java.nio.channels.WritableByteChannel;
-import java.nio.charset.Charset;
-import java.security.GeneralSecurityException;
-import java.security.NoSuchAlgorithmException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 
-import static org.asynchttpclient.util.MiscUtil.isNonEmpty;
-import static org.asynchttpclient.util.AsyncHttpProviderUtils.DEFAULT_CHARSET;
-
-
-public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<Object> implements AsyncHttpProvider {
+public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter implements AsyncHttpProvider {
     private final static String WEBSOCKET_KEY = "Sec-WebSocket-Key";
     private final static String HTTP_HANDLER = "httpHandler";
     protected final static String SSL_HANDLER = "sslHandler";
@@ -226,9 +228,9 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
             }
         }
         plainBootstrap = new Bootstrap().channel(socketChannelFactory).group(eventLoop);
-        secureBootstrap = new Bootstrap().channel(socketChannelFactory).group(eventLoop);;
-        webSocketBootstrap = new Bootstrap().channel(socketChannelFactory).group(eventLoop);;
-        secureWebSocketBootstrap = new Bootstrap().channel(socketChannelFactory).group(eventLoop);;
+        secureBootstrap = new Bootstrap().channel(socketChannelFactory).group(eventLoop);
+        webSocketBootstrap = new Bootstrap().channel(socketChannelFactory).group(eventLoop);
+        secureWebSocketBootstrap = new Bootstrap().channel(socketChannelFactory).group(eventLoop);
         configureNetty();
 
         this.config = config;
@@ -419,7 +421,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
     protected final <T> void writeRequest(final Channel channel,
                                           final AsyncHttpClientConfig config,
                                           final NettyResponseFuture<T> future,
-                                          final HttpRequest nettyRequest) {
+                                          final FullHttpRequest nettyRequest) {
         try {
             /**
              * If the channel is dead because it was pooled and the remote server decided to close it,
@@ -464,7 +466,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
                 }
 
                 TransferCompletionHandler.class.cast(future.getAsyncHandler()).transferAdapter(
-                        new NettyTransferAdapter(h, nettyRequest.getContent(), future.getRequest().getFile()));
+                        new NettyTransferAdapter(h, nettyRequest.content(), future.getRequest().getFile()));
             }
 
             // Leave it to true.
@@ -592,7 +594,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
 
     private static HttpRequest construct(AsyncHttpClientConfig config,
                                          Request request,
-                                         HttpMethod m,
+                                         HttpMethod method,
                                          URI uri,
                                          ByteBuf buffer,
                                          ProxyServer proxyServer) throws IOException {
@@ -604,60 +606,62 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
             host = request.getVirtualHost();
         }
 
-        FullHttpRequest nettyRequest;
-        if (m.equals(HttpMethod.CONNECT)) {
-            nettyRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_0, m, AsyncHttpProviderUtils.getAuthority(uri));
+        HttpVersion httpVersion;
+        String requestUri;
+        Map<String, Object> headers = new HashMap<String, Object>();
+        if (request.equals(HttpMethod.CONNECT)) {
+        	httpVersion = HttpVersion.HTTP_1_0;
+        	requestUri = AsyncHttpProviderUtils.getAuthority(uri);
         } else {
-            String path = null;
             if (proxyServer != null && !(isSecure(uri) && config.isUseRelativeURIsWithSSLProxies()))
-                path = uri.toString();
+            	requestUri = uri.toString();
             else if (uri.getRawQuery() != null)
-                path = uri.getRawPath() + "?" + uri.getRawQuery();
+            	requestUri = uri.getRawPath() + "?" + uri.getRawQuery();
             else
-                path = uri.getRawPath();
-            nettyRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, m, path);
+            	requestUri = uri.getRawPath();
+            httpVersion = HttpVersion.HTTP_1_1;
         }
 
         if (webSocket) {
-            nettyRequest.headers().add(HttpHeaders.Names.UPGRADE, HttpHeaders.Values.WEBSOCKET);
-            nettyRequest.headers().add(HttpHeaders.Names.CONNECTION, HttpHeaders.Values.UPGRADE);
-            nettyRequest.headers().add("Origin", "http://" + uri.getHost() + ":"
+        	headers.put(HttpHeaders.Names.UPGRADE, HttpHeaders.Values.WEBSOCKET);
+        	headers.put(HttpHeaders.Names.CONNECTION, HttpHeaders.Values.UPGRADE);
+        	headers.put("Origin", "http://" + uri.getHost() + ":"
                     + (uri.getPort() == -1 ? isSecure(uri.getScheme()) ? 443 : 80 : uri.getPort()));
-            nettyRequest.headers().add(WEBSOCKET_KEY, WebSocketUtil.getKey());
-            nettyRequest.headers().add("Sec-WebSocket-Version", "13");
+        	headers.put(WEBSOCKET_KEY, WebSocketUtil.getKey());
+        	headers.put("Sec-WebSocket-Version", "13");
         }
 
         if (host != null) {
             if (uri.getPort() == -1) {
-                nettyRequest.headers().set(HttpHeaders.Names.HOST, host);
+            	headers.put(HttpHeaders.Names.HOST, host);
             } else if (request.getVirtualHost() != null) {
-                nettyRequest.headers().set(HttpHeaders.Names.HOST, host);
+            	headers.put(HttpHeaders.Names.HOST, host);
             } else {
-                nettyRequest.headers().set(HttpHeaders.Names.HOST, host + ":" + uri.getPort());
+            	headers.put(HttpHeaders.Names.HOST, host + ":" + uri.getPort());
             }
         } else {
             host = "127.0.0.1";
         }
 
-        if (!m.equals(HttpMethod.CONNECT)) {
+        if (!method.equals(HttpMethod.CONNECT)) {
             FluentCaseInsensitiveStringsMap h = request.getHeaders();
             if (h != null) {
                 for (String name : h.keySet()) {
                     if (!"host".equalsIgnoreCase(name)) {
                         for (String value : h.get(name)) {
-                            nettyRequest.headers().add(name, value);
+                        	headers.put(name, value);
                         }
                     }
                 }
             }
 
             if (config.isCompressionEnabled()) {
-                nettyRequest.headers().set(HttpHeaders.Names.ACCEPT_ENCODING, HttpHeaders.Values.GZIP);
+            	headers.put(HttpHeaders.Names.ACCEPT_ENCODING, HttpHeaders.Values.GZIP);
             }
         } else {
             List<String> auth = request.getHeaders().get(HttpHeaders.Names.PROXY_AUTHORIZATION);
             if (isNonEmpty(auth) && auth.get(0).startsWith("NTLM")) {
-                nettyRequest.headers().add(HttpHeaders.Names.PROXY_AUTHORIZATION, auth.get(0));
+                headers.put(HttpHeaders.Names.PROXY_AUTHORIZATION, auth.get(0));
             }
         }
         Realm realm = request.getRealm() != null ? request.getRealm() : config.getRealm();
@@ -676,13 +680,13 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
 
             switch (realm.getAuthScheme()) {
                 case BASIC:
-                    nettyRequest.headers().set(HttpHeaders.Names.AUTHORIZATION,
+                	headers.put(HttpHeaders.Names.AUTHORIZATION,
                             AuthenticatorUtils.computeBasicAuthentication(realm));
                     break;
                 case DIGEST:
                     if (isNonEmpty(realm.getNonce())) {
                         try {
-                            nettyRequest.headers().set(HttpHeaders.Names.AUTHORIZATION,
+                            headers.put(HttpHeaders.Names.AUTHORIZATION,
                                     AuthenticatorUtils.computeDigestAuthentication(realm));
                         } catch (NoSuchAlgorithmException e) {
                             throw new SecurityException(e);
@@ -692,7 +696,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
                 case NTLM:
                     try {
                         String msg = ntlmEngine.generateType1Msg("NTLM " + domain, authHost);
-                        nettyRequest.headers().set(HttpHeaders.Names.AUTHORIZATION, "NTLM " + msg);
+                        headers.put(HttpHeaders.Names.AUTHORIZATION, "NTLM " + msg);
                     } catch (NTLMEngineException e) {
                         IOException ie = new IOException();
                         ie.initCause(e);
@@ -710,7 +714,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
                         ie.initCause(e);
                         throw ie;
                     }
-                    nettyRequest.headers().set(HttpHeaders.Names.AUTHORIZATION, "Negotiate " + challengeHeader);
+                    headers.put(HttpHeaders.Names.AUTHORIZATION, "Negotiate " + challengeHeader);
                     break;
                 case NONE:
                     break;
@@ -720,12 +724,12 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
         }
 
         if (!webSocket && !request.getHeaders().containsKey(HttpHeaders.Names.CONNECTION)) {
-            nettyRequest.headers().set(HttpHeaders.Names.CONNECTION, AsyncHttpProviderUtils.keepAliveHeaderValue(config));
+            headers.put(HttpHeaders.Names.CONNECTION, AsyncHttpProviderUtils.keepAliveHeaderValue(config));
         }
 
         if (proxyServer != null) {
             if (!request.getHeaders().containsKey("Proxy-Connection")) {
-                nettyRequest.headers().set("Proxy-Connection", AsyncHttpProviderUtils.keepAliveHeaderValue(config));
+                headers.put("Proxy-Connection", AsyncHttpProviderUtils.keepAliveHeaderValue(config));
             }
 
             if (proxyServer.getPrincipal() != null) {
@@ -736,7 +740,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
                         try {
                             String msg = ntlmEngine.generateType1Msg(proxyServer.getNtlmDomain(),
                                     proxyServer.getHost());
-                            nettyRequest.headers().set(HttpHeaders.Names.PROXY_AUTHORIZATION, "NTLM " + msg);
+                            headers.put(HttpHeaders.Names.PROXY_AUTHORIZATION, "NTLM " + msg);
                         } catch (NTLMEngineException e) {
                             IOException ie = new IOException();
                             ie.initCause(e);
@@ -744,7 +748,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
                         }
                     }
                 } else {
-                    nettyRequest.headers().set(HttpHeaders.Names.PROXY_AUTHORIZATION,
+                    headers.put(HttpHeaders.Names.PROXY_AUTHORIZATION,
                             AuthenticatorUtils.computeBasicAuthentication(proxyServer));
                 }
             }
@@ -752,34 +756,22 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
 
         // Add default accept headers.
         if (request.getHeaders().getFirstValue("Accept") == null) {
-            nettyRequest.headers().set(HttpHeaders.Names.ACCEPT, "*/*");
+            headers.put(HttpHeaders.Names.ACCEPT, "*/*");
         }
 
         if (request.getHeaders().getFirstValue("User-Agent") != null) {
-            nettyRequest.headers().set("User-Agent", request.getHeaders().getFirstValue("User-Agent"));
+            headers.put("User-Agent", request.getHeaders().getFirstValue("User-Agent"));
         } else if (config.getUserAgent() != null) {
-            nettyRequest.headers().set("User-Agent", config.getUserAgent());
+            headers.put("User-Agent", config.getUserAgent());
         } else {
-            nettyRequest.headers().set("User-Agent",
+            headers.put("User-Agent",
                          AsyncHttpProviderUtils.constructUserAgent(NettyAsyncHttpProvider.class,
                                                                    config));
         }
 
-        if (!m.equals(HttpMethod.CONNECT)) {
+        if (!method.equals(HttpMethod.CONNECT)) {
             if (isNonEmpty(request.getCookies())) {
-                CookieEncoder httpCookieEncoder = new CookieEncoder(false);
-                Iterator<Cookie> ic = request.getCookies().iterator();
-                Cookie c;
-                org.jboss.netty.handler.codec.http.Cookie cookie;
-                while (ic.hasNext()) {
-                    c = ic.next();
-                    cookie = new DefaultCookie(c.getName(), c.getValue());
-                    cookie.setPath(c.getPath());
-                    cookie.setMaxAge(c.getMaxAge());
-                    cookie.setDomain(c.getDomain());
-                    httpCookieEncoder.addCookie(cookie);
-                }
-                nettyRequest.headers().set(HttpHeaders.Names.COOKIE, httpCookieEncoder.encode());
+            	headers.put(HttpHeaders.Names.COOKIE, CookieEncoder.encodeClientSide(request.getCookies(), config.isRfc6265CookieEncoding()));
             }
 
             String reqType = request.getMethod();
@@ -787,22 +779,23 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
 
                 String bodyCharset = request.getBodyEncoding() == null ? DEFAULT_CHARSET : request.getBodyEncoding();
 
+                ByteBuf content;
                 // We already have processed the body.
                 if (buffer != null && buffer.writerIndex() != 0) {
-                    nettyRequest.headers().set(HttpHeaders.Names.CONTENT_LENGTH, buffer.writerIndex());
-                    nettyRequest.setContent(buffer);
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, buffer.writerIndex());
+                    content = buffer;
                 } else if (request.getByteData() != null) {
-                    nettyRequest.headers().set(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(request.getByteData().length));
-                    nettyRequest.setContent(Unpooled.wrappedBuffer(request.getByteData()));
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(request.getByteData().length));
+                    content = Unpooled.wrappedBuffer(request.getByteData());
                 } else if (request.getStringData() != null) {
-                    nettyRequest.headers().set(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(request.getStringData().getBytes(bodyCharset).length));
-                    nettyRequest.setContent(Unpooled.wrappedBuffer(request.getStringData().getBytes(bodyCharset)));
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(request.getStringData().getBytes(bodyCharset).length));
+                    content = Unpooled.wrappedBuffer(request.getStringData().getBytes(bodyCharset));
                 } else if (request.getStreamData() != null) {
                     int[] lengthWrapper = new int[1];
                     byte[] bytes = AsyncHttpProviderUtils.readFully(request.getStreamData(), lengthWrapper);
                     int length = lengthWrapper[0];
-                    nettyRequest.headers().set(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(length));
-                    nettyRequest.setContent(Unpooled.wrappedBuffer(bytes, 0, length));
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(length));
+                    content = Unpooled.wrappedBuffer(bytes, 0, length);
                 } else if (isNonEmpty(request.getParams())) {
                     StringBuilder sb = new StringBuilder();
                     for (final Entry<String, List<String>> paramEntry : request.getParams()) {
@@ -816,24 +809,25 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
                             UTF8UrlEncoder.appendEncoded(sb, value);
                         }
                     }
-                    nettyRequest.headers().set(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(sb.length()));
-                    nettyRequest.setContent(Unpooled.wrappedBuffer(sb.toString().getBytes(bodyCharset)));
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(sb.length()));
+                    content = Unpooled.wrappedBuffer(sb.toString().getBytes(bodyCharset));
 
                     if (!request.getHeaders().containsKey(HttpHeaders.Names.CONTENT_TYPE)) {
-                        nettyRequest.headers().set(HttpHeaders.Names.CONTENT_TYPE, "application/x-www-form-urlencoded");
+                        headers.put(HttpHeaders.Names.CONTENT_TYPE, "application/x-www-form-urlencoded");
                     }
 
                 } else if (request.getParts() != null) {
-                    int lenght = computeAndSetContentLength(request, nettyRequest);
+                	// FXIME
+//                    int lenght = computeAndSetContentLength(request, nettyRequest);
 
-                    if (lenght == -1) {
-                        lenght = MAX_BUFFERED_BYTES;
-                    }
+//                    if (lenght == -1) {
+//                        lenght = MAX_BUFFERED_BYTES;
+//                    }
 
-                    MultipartRequestEntity mre = AsyncHttpProviderUtils.createMultipartRequestEntity(request.getParts(), request.getParams());
+                	MultipartRequestEntity mre = AsyncHttpProviderUtils.createMultipartRequestEntity(request.getParts(), request.getHeaders());
 
-                    nettyRequest.headers().set(HttpHeaders.Names.CONTENT_TYPE, mre.getContentType());
-                    nettyRequest.headers().set(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(mre.getContentLength()));
+                    headers.put(HttpHeaders.Names.CONTENT_TYPE, mre.getContentType());
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(mre.getContentLength()));
 
                     /**
                      * TODO: AHC-78: SSL + zero copy isn't supported by the MultiPart class and pretty complex to implements.
@@ -853,14 +847,14 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
 
                     ByteBuf b = Unpooled.buffer(lenght);
                     request.getEntityWriter().writeEntity(new ByteBufOutputStream(b));
-                    nettyRequest.headers().set(HttpHeaders.Names.CONTENT_LENGTH, b.writerIndex());
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, b.writerIndex());
                     nettyRequest.setContent(b);
                 } else if (request.getFile() != null) {
                     File file = request.getFile();
                     if (!file.isFile()) {
                         throw new IOException(String.format("File %s is not a file or doesn't exist", file.getAbsolutePath()));
                     }
-                    nettyRequest.headers().set(HttpHeaders.Names.CONTENT_LENGTH, file.length());
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, file.length());
                 }
             }
         }
@@ -1660,17 +1654,17 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
         return false;
     }
 
-    private final static int computeAndSetContentLength(Request request, HttpRequest r) {
-        int length = (int) request.getContentLength();
-        if (length == -1 && r.headers().get(HttpHeaders.Names.CONTENT_LENGTH) != null) {
-            length = Integer.valueOf(r.headers().get(HttpHeaders.Names.CONTENT_LENGTH));
-        }
-
-        if (length >= 0) {
-            r.headers().set(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(length));
-        }
-        return length;
-    }
+//    private final static int computeAndSetContentLength(Request request, HttpRequest r) {
+//        int length = (int) request.getContentLength();
+//        if (length == -1 && r.headers().get(HttpHeaders.Names.CONTENT_LENGTH) != null) {
+//            length = Integer.valueOf(r.headers().get(HttpHeaders.Names.CONTENT_LENGTH));
+//        }
+//
+//        if (length >= 0) {
+//            r.headers().set(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(length));
+//        }
+//        return length;
+//    }
 
     public static <T> NettyResponseFuture<T> newFuture(URI uri,
                                                        Request request,
@@ -1690,7 +1684,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
         return f;
     }
 
-    private class ProgressListener implements ChannelFutureProgressListener {
+    private class ProgressListener implements GenericProgressiveFutureListener {
 
         private final boolean notifyHeaders;
         private final AsyncHandler<?> asyncHandler;
@@ -1757,10 +1751,10 @@ public class NettyAsyncHttpProvider extends ChannelInboundMessageHandlerAdapter<
             }
         }
 
-        public void operationProgressed(ChannelFuture cf, long amount, long current, long total) {
+        public void operationProgressed(ChannelFuture cf, long progress, long total){
             future.touch();
             if (ProgressAsyncHandler.class.isAssignableFrom(asyncHandler.getClass())) {
-                ProgressAsyncHandler.class.cast(asyncHandler).onContentWriteProgress(amount, current, total);
+                ProgressAsyncHandler.class.cast(asyncHandler).onContentWriteProgress(total - progress, progress, total);
             }
         }
     }

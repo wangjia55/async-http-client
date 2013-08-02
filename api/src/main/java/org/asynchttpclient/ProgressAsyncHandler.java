@@ -36,7 +36,7 @@ public interface ProgressAsyncHandler<T> extends AsyncHandler<T> {
 
     /**
      * Invoked when the I/O operation associated with the {@link Request} body wasn't fully written in a single I/O write
-     * operation. This method is never invoked if the write operation complete in a sinfle I/O write.
+     * operation. This method is never invoked if the write operation complete in a single I/O write.
      *
      * @param amount  The amount of bytes to transfer.
      * @param current The amount of bytes transferred

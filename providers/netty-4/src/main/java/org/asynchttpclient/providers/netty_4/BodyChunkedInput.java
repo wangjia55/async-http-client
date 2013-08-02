@@ -13,84 +13,64 @@
 package org.asynchttpclient.providers.netty_4;
 
 import org.asynchttpclient.Body;
+
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.stream.ChunkedInput;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 
 /**
  * Adapts a {@link Body} to Netty's {@link ChunkedInput}.
  */
-class BodyChunkedInput
-        implements ChunkedInput<ByteBuf> {
+class BodyChunkedInput implements ChunkedInput<ByteBuf> {
+
+	private static final int DEFAULT_CHUNK_SIZE = 8 * 1024;
 
     private final Body body;
+    private final int contentLength;
+    private final int chunkSize;
 
-    private final int chunkSize = 1024 * 8;
-
-    private ByteBuffer nextChunk;
-
-    private static final ByteBuffer EOF = ByteBuffer.allocate(0);
-
-    private boolean endOfInput = false;
+    private boolean endOfInput;
 
     public BodyChunkedInput(Body body) {
         if (body == null) {
             throw new IllegalArgumentException("no body specified");
         }
         this.body = body;
-    }
-
-    private ByteBuffer peekNextChunk()
-            throws IOException {
-
-        if (nextChunk == null) {
-            ByteBuffer buffer = ByteBuffer.allocate(chunkSize);
-            long length = body.read(buffer);
-            if (length < 0) {
-                // Negative means this is finished
-                buffer.flip();
-                nextChunk = buffer;
-                endOfInput = true;
-            } else if (length == 0) {
-                // Zero means we didn't get anything this time, but may get next time
-                buffer.flip();
-                nextChunk = null;
-            } else {
-                buffer.flip();
-                nextChunk = buffer;
-            }
-        }
-        return nextChunk;
-    }
-
-    /**
-     * Having no next chunk does not necessarily means end of input, other chunks may arrive later
-     */
-    public boolean hasNextChunk() throws Exception {
-        return peekNextChunk() != null;
+        contentLength = (int) body.getContentLength();
+        if (contentLength <= 0)
+            chunkSize = DEFAULT_CHUNK_SIZE;
+        else
+            chunkSize = Math.min(contentLength, DEFAULT_CHUNK_SIZE);
     }
 
     @Override
-    public boolean readChunk(ByteBuf b) throws Exception {
-        ByteBuffer buffer = peekNextChunk();
-        if (buffer == null || buffer == EOF) {
-            return false;
+    public ByteBuf readChunk(ChannelHandlerContext ctx) throws Exception {
+        if (endOfInput) {
+            return null;
+        } else {
+            ByteBuffer buffer = ByteBuffer.allocate(chunkSize);
+            long r = body.read(buffer);
+            if (r < 0L) {
+                endOfInput = true;
+                return null;
+            } else {
+                endOfInput = r == contentLength || r < chunkSize && contentLength > 0;
+                buffer.flip();
+                return Unpooled.wrappedBuffer(buffer);
+            }
         }
-        nextChunk = null;
-
-        b.writeBytes(buffer);
-        return true;
     }
 
+    @Override
     public boolean isEndOfInput() throws Exception {
         return endOfInput;
     }
 
+    @Override
     public void close() throws Exception {
         body.close();
     }
-
 }
