@@ -501,7 +501,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                                 writeFuture = channel.write(region);
                             }
                             writeFuture.addListener(new ProgressListener(false, future.getAsyncHandler(), future) {
-                                public void operationComplete(ChannelFuture cf) {
+                                public void operationComplete(ChannelProgressiveFuture cf) {
                                     try {
                                         raf.close();
                                     } catch (IOException e) {
@@ -541,7 +541,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
                         final Body b = body;
                         writeFuture.addListener(new ProgressListener(false, future.getAsyncHandler(), future) {
-                            public void operationComplete(ChannelFuture cf) {
+                            public void operationComplete(ChannelProgressiveFuture cf) {
                                 try {
                                     b.close();
                                 } catch (IOException e) {
