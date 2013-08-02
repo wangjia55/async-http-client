@@ -15,11 +15,9 @@
  */
 package org.asynchttpclient.providers.netty4;
 
-import org.asynchttpclient.AsyncHttpProvider;
-import org.asynchttpclient.HttpResponseBodyPart;
 import io.netty.buffer.ByteBuf;
-import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpContent;
+import io.netty.handler.codec.http.LastHttpContent;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -29,29 +27,23 @@ import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.asynchttpclient.AsyncHttpProvider;
+import org.asynchttpclient.HttpResponseBodyPart;
+
 /**
  * A callback class used when an HTTP response body is received.
  */
 public class ResponseBodyPart extends HttpResponseBodyPart {
 
     private final HttpContent chunk;
-    private final FullHttpResponse response;
     private final AtomicReference<byte[]> bytes = new AtomicReference<byte[]>(null);
     private final boolean isLast;
     private boolean closeConnection = false;
 
-    /**
-     * Constructor used for non-chunked GET requests and HEAD requests.
-     */
-    public ResponseBodyPart(URI uri, FullHttpResponse response, AsyncHttpProvider provider, boolean last) {
-        this(uri, response, provider, null, last);
-    }
-
-    public ResponseBodyPart(URI uri, FullHttpResponse response, AsyncHttpProvider provider, HttpContent chunk, boolean last) {
+    public ResponseBodyPart(URI uri, AsyncHttpProvider provider, HttpContent chunk) {
         super(uri, provider);
         this.chunk = chunk;
-        this.response = response;
-        isLast = last;
+        isLast = chunk instanceof LastHttpContent;
     }
     
     /**
@@ -79,8 +71,7 @@ public class ResponseBodyPart extends HttpResponseBodyPart {
 
     @Override
     public int length() {
-        ByteBuf b = (chunk != null) ? chunk.content() : response.content();
-        return b.readableBytes();
+        return chunk.content().readableBytes();
     }
     
     @Override
@@ -99,7 +90,7 @@ public class ResponseBodyPart extends HttpResponseBodyPart {
     }
 
     public ByteBuf getChannelBuffer() {
-        return chunk != null ? chunk.content() : response.content();
+        return chunk.content();
     }
 
     /**

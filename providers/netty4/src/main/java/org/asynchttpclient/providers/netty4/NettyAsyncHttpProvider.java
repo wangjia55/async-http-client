@@ -473,7 +473,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             // Leave it to true.
             if (future.getAndSetWriteHeaders(true)) {
                 try {
-                    channel.write(nettyRequest).addListener(new ProgressListener(true, future.getAsyncHandler(), future));
+                    channel.writeAndFlush(nettyRequest, channel.newProgressivePromise()).addListener(new ProgressListener(true, future.getAsyncHandler(), future));
                 } catch (Throwable cause) {
                     log.debug(cause.getMessage(), cause);
                     try {
@@ -498,10 +498,10 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
                             ChannelFuture writeFuture;
                             if (channel.pipeline().get(SslHandler.class) != null) {
-                                writeFuture = channel.write(new ChunkedFile(raf, 0, fileLength, MAX_BUFFERED_BYTES));
+                                writeFuture = channel.write(new ChunkedFile(raf, 0, fileLength, MAX_BUFFERED_BYTES), channel.newProgressivePromise());
                             } else {
                                 final FileRegion region = new OptimizedFileRegion(raf, 0, fileLength);
-                                writeFuture = channel.write(region);
+                                writeFuture = channel.write(region, channel.newProgressivePromise());
                             }
                             writeFuture.addListener(new ProgressListener(false, future.getAsyncHandler(), future) {
                                 public void operationComplete(ChannelProgressiveFuture cf) {
@@ -527,7 +527,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         ChannelFuture writeFuture;
                         if (channel.pipeline().get(SslHandler.class) == null && (body instanceof RandomAccessBody)) {
                             BodyFileRegion bodyFileRegion = new BodyFileRegion((RandomAccessBody) body);
-                            writeFuture = channel.write(bodyFileRegion);
+                            writeFuture = channel.write(bodyFileRegion, channel.newProgressivePromise());
                         } else {
                             BodyChunkedInput bodyChunkedInput = new BodyChunkedInput(body);
                             BodyGenerator bg = future.getRequest().getBodyGenerator();
@@ -539,7 +539,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                                     }
                                 });
                             }
-                            writeFuture = channel.write(bodyChunkedInput);
+                            writeFuture = channel.write(bodyChunkedInput, channel.newProgressivePromise());
                         }
 
                         final Body b = body;
@@ -553,6 +553,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                                 super.operationComplete(cf);
                             }
                         });
+                        channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
                     }
                 }
             }
@@ -1099,7 +1100,6 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         IN_IO_THREAD.set(Boolean.TRUE);
         
         Object attachment = ctx.attr(DEFAULT_ATTRIBUTE).get();
-        
         if (attachment == null) {
             log.debug("ChannelHandlerContext wasn't having any attachment");
         }
@@ -2023,10 +2023,10 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             AsyncHandler handler = future.getAsyncHandler();
             Request request = future.getRequest();
             ProxyServer proxyServer = future.getProxyServer();
-            FullHttpResponse response = null;
+            HttpResponse response = null;
             try {
-                if (e instanceof FullHttpResponse) {
-                    response = (FullHttpResponse) e;
+                if (e instanceof HttpResponse) {
+                    response = (HttpResponse) e;
 
                     log.debug("\n\nRequest {}\n\nResponse {}\n", nettyRequest, response);
 
@@ -2171,28 +2171,16 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     } else if (updateHeadersAndInterrupt(handler, responseHeaders)) {
                         finishUpdate(future, ctx, HttpHeaders.isTransferEncodingChunked(response));
                         return;
-                    } else if (!HttpHeaders.isTransferEncodingChunked(response)) {
-                        if (response.content().readableBytes() != 0) {
-                            updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), response, NettyAsyncHttpProvider.this, true));
-                        }
-                        finishUpdate(future, ctx, false);
-                        return;
                     }
 
-                    if (nettyRequest.getMethod().equals(HttpMethod.HEAD)) {
-                        updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), response, NettyAsyncHttpProvider.this, true));
-                        markAsDone(future, ctx);
-                        drainChannel(ctx, future);
-                    }
-
-                } else if (e instanceof DefaultHttpContent) {
-                    DefaultHttpContent chunk = (DefaultHttpContent) e;
+                } else if (e instanceof HttpContent) {
+                    HttpContent chunk = (HttpContent) e;
 
                     if (handler != null) {
                         boolean last = chunk instanceof LastHttpContent;
-                        if (last || updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), null, NettyAsyncHttpProvider.this, chunk, false))) {
-                            if (chunk instanceof DefaultLastHttpContent) {
-                                updateHeadersAndInterrupt(handler, new ResponseHeaders(future.getURI(), future.getHttpResponse(), NettyAsyncHttpProvider.this, (DefaultLastHttpContent) chunk));
+                        if (last || updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), NettyAsyncHttpProvider.this, chunk))) {
+                            if (chunk instanceof LastHttpContent) {
+                                updateHeadersAndInterrupt(handler, new ResponseHeaders(future.getURI(), future.getHttpResponse(), NettyAsyncHttpProvider.this, (LastHttpContent) chunk));
                             }
                             finishUpdate(future, ctx, !last);
                         }
@@ -2330,7 +2318,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
                 if (frame.content() != null) {
                     HttpContent webSocketChunk = new DefaultHttpContent(Unpooled.wrappedBuffer(frame.content()));
-                    ResponseBodyPart rp = new ResponseBodyPart(future.getURI(), null, NettyAsyncHttpProvider.this, webSocketChunk, true);
+                    ResponseBodyPart rp = new ResponseBodyPart(future.getURI(), NettyAsyncHttpProvider.this, webSocketChunk);
                     h.onBodyPartReceived(rp);
 
                     NettyWebSocket webSocket = NettyWebSocket.class.cast(h.onCompleted());
