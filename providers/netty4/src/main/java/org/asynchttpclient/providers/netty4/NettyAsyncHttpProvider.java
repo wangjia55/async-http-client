@@ -289,7 +289,13 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             }
         }
 
-        plainBootstrap.handler(createPlainPipelineFactory());
+        plainBootstrap.handler(new ChannelInitializer<Channel>() {
+
+            @Override
+            protected void initChannel(Channel ch) throws Exception {
+                initPlainChannel(ch);
+            }
+        });
         // FIXME
         // DefaultChannelFuture.setUseDeadLockChecker(false);
 
@@ -320,27 +326,21 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             return new HttpClientCodec();
         }
     }
+    
+    protected void initPlainChannel(Channel ch) throws Exception {
+        ChannelPipeline pipeline = ch.pipeline();
 
-    protected ChannelInitializer<Channel> createPlainPipelineFactory() {
-        return new ChannelInitializer<Channel>() {
+        pipeline.addLast(HTTP_HANDLER, newHttpClientCodec());
 
-            @Override
-            protected void initChannel(Channel ch) throws Exception {
-                ChannelPipeline pipeline = ch.pipeline();
+        if (config.getRequestCompressionLevel() > 0) {
+            pipeline.addLast("deflater", new HttpContentCompressor(config.getRequestCompressionLevel()));
+        }
 
-                pipeline.addLast(HTTP_HANDLER, newHttpClientCodec());
-
-                if (config.getRequestCompressionLevel() > 0) {
-                    pipeline.addLast("deflater", new HttpContentCompressor(config.getRequestCompressionLevel()));
-                }
-
-                if (config.isCompressionEnabled()) {
-                    pipeline.addLast("inflater", new HttpContentDecompressor());
-                }
-                pipeline.addLast("chunkedWriter", new ChunkedWriteHandler());
-                pipeline.addLast("httpProcessor", NettyAsyncHttpProvider.this);
-            }
-        };
+        if (config.isCompressionEnabled()) {
+            pipeline.addLast("inflater", new HttpContentDecompressor());
+        }
+        pipeline.addLast("chunkedWriter", new ChunkedWriteHandler());
+        pipeline.addLast("httpProcessor", NettyAsyncHttpProvider.this);
     }
 
     <T> void constructSSLPipeline(final NettyConnectListener<T> cl) {

@@ -69,20 +69,16 @@ public class NettyAsyncProviderPipelineTest extends AbstractBasicTest {
         }
     }
 
-    private static class CopyEncodingNettyAsyncHttpProvider extends
-            NettyAsyncHttpProvider {
+    private static class CopyEncodingNettyAsyncHttpProvider extends NettyAsyncHttpProvider {
+
         public CopyEncodingNettyAsyncHttpProvider(AsyncHttpClientConfig config) {
             super(config);
         }
 
-        protected ChannelInitializer<Channel> createPlainPipelineFactory() {
-            final ChannelInitializer<Channel> pipelineFactory = super.createPlainPipelineFactory();
-            return new ChannelInitializer<Channel>() {
-                public void initChannel(Channel ch) throws Exception {
-                    ChannelPipeline pipeline = ch.pipeline();
-                    pipeline.addBefore("inflater", "copyEncodingHeader", new CopyEncodingHandler());
-                }
-            };
+        protected void initPlainChannel(Channel ch) throws Exception {
+            super.initPlainChannel(ch);
+            ChannelPipeline pipeline = ch.pipeline();
+            pipeline.addBefore("inflater", "copyEncodingHeader", new CopyEncodingHandler());
         }
     }
 
