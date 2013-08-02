@@ -23,7 +23,6 @@ import org.asynchttpclient.providers.netty4.NettyAsyncHttpProvider;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelPipeline;
-import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.handler.codec.http.HttpMessage;
 

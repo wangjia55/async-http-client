@@ -14,8 +14,6 @@ package org.asynchttpclient.providers.netty4;
 
 import static org.testng.Assert.assertEquals;
 
-import java.util.concurrent.Executors;
-
 import org.asynchttpclient.providers.netty4.NettyAsyncHttpProviderConfig;
 import org.testng.annotations.Test;
 import org.asynchttpclient.AsyncHttpClient;
@@ -28,8 +26,6 @@ public class NettyAsyncHttpProviderTest extends AbstractBasicTest {
     @Test
     public void bossThreadPoolExecutor() throws Throwable {
         NettyAsyncHttpProviderConfig conf = new NettyAsyncHttpProviderConfig();
-        // FIXME
-//        conf.setEventLoopGroup(Executors.newSingleThreadExecutor());
 
         AsyncHttpClientConfig cf = new AsyncHttpClientConfig.Builder().setAsyncHttpClientProviderConfig(conf).build();
         AsyncHttpClient c = getAsyncHttpClient(cf);
