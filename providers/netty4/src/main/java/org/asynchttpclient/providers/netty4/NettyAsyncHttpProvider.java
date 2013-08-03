@@ -517,6 +517,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                                     super.operationComplete(cf);
                                 }
                             });
+                            channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
                         } catch (IOException ex) {
                             if (raf != null) {
                                 try {
@@ -2194,7 +2195,6 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                                 LastHttpContent lastChunk = (LastHttpContent) chunk;
                                 HttpHeaders trailingHeaders = lastChunk.trailingHeaders();
                                 if (!trailingHeaders.isEmpty()) {
-                                    System.err.println(trailingHeaders);
                                     interrupt = handler.onHeadersReceived(new ResponseHeaders(future.getURI(), future.getHttpResponse().headers(), NettyAsyncHttpProvider.this, trailingHeaders)) != STATE.CONTINUE;
                                 }
                             }
