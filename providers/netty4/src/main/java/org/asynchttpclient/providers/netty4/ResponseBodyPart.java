@@ -25,7 +25,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.asynchttpclient.AsyncHttpProvider;
 import org.asynchttpclient.HttpResponseBodyPart;
@@ -35,62 +34,47 @@ import org.asynchttpclient.HttpResponseBodyPart;
  */
 public class ResponseBodyPart extends HttpResponseBodyPart {
 
-    private final HttpContent chunk;
-    private final AtomicReference<byte[]> bytes = new AtomicReference<byte[]>(null);
+    private final byte[] bytes;
     private final boolean isLast;
     private boolean closeConnection = false;
 
     public ResponseBodyPart(URI uri, AsyncHttpProvider provider, HttpContent chunk) {
         super(uri, provider);
-        this.chunk = chunk;
+        ByteBuf byteBuf = chunk.content();
+        bytes = new byte[byteBuf.readableBytes()];
+        System.arraycopy(byteBuf.nioBuffer().array(), 0, bytes, 0, bytes.length);
         isLast = chunk instanceof LastHttpContent;
     }
-    
+
     /**
      * Return the response body's part bytes received.
-     *
+     * 
      * @return the response body's part bytes received.
      */
     @Override
     public byte[] getBodyPartBytes() {
-        byte[] bp = bytes.get();
-        if (bp != null) {
-            return bp;
-        }
-
-        ByteBuf b = getByteBuf();
-        byte[] rb = b.nioBuffer().array();
-        bytes.set(rb);
-        return rb;
+        return bytes;
     }
 
     @Override
     public InputStream readBodyPartBytes() {
-        return new ByteArrayInputStream(getBodyPartBytes());
+        return new ByteArrayInputStream(bytes);
     }
 
     @Override
     public int length() {
-        return chunk.content().readableBytes();
+        return bytes.length;
     }
-    
+
     @Override
     public int writeTo(OutputStream outputStream) throws IOException {
-        ByteBuf b = getByteBuf();
-        int available = b.readableBytes();
-        if (available > 0) {
-            b.getBytes(b.readerIndex(), outputStream, available);
-        }
-        return available;
+        outputStream.write(bytes);
+        return length();
     }
 
     @Override
     public ByteBuffer getBodyByteBuffer() {
-        return ByteBuffer.wrap(getBodyPartBytes());
-    }
-
-    public ByteBuf getByteBuf() {
-        return chunk.content();
+        return ByteBuffer.wrap(bytes);
     }
 
     /**
@@ -115,13 +99,5 @@ public class ResponseBodyPart extends HttpResponseBodyPart {
     @Override
     public boolean closeUnderlyingConnection() {
         return closeConnection;
-    }
-
-    protected HttpContent chunk() {
-        return chunk;
-    }
-
-    public void freeUnderlyingByteBuff() {
-        chunk.content().release();
     }
 }

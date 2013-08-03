@@ -281,11 +281,15 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         if (asyncHttpProviderConfig != null) {
             for (Entry<String, Object> entry : asyncHttpProviderConfig.propertiesSet()) {
                 ChannelOption<Object> key = optionMap.get(entry.getKey());
-                Object value = entry.getValue();
-                plainBootstrap.option(key, value);
-                webSocketBootstrap.option(key, value);
-                secureBootstrap.option(key, value);
-                secureWebSocketBootstrap.option(key, value);
+                if (key != null) {
+                    Object value = entry.getValue();
+                    plainBootstrap.option(key, value);
+                    webSocketBootstrap.option(key, value);
+                    secureBootstrap.option(key, value);
+                    secureWebSocketBootstrap.option(key, value);
+                } else {
+                    throw new IllegalArgumentException("Unknown config property " + entry.getKey());
+                }
             }
         }
 
@@ -2184,14 +2188,18 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 } else if (e instanceof HttpContent) {
                     HttpContent chunk = (HttpContent) e;
 
-                    if (handler != null) {
-                        boolean last = chunk instanceof LastHttpContent;
-                        if (last || updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), NettyAsyncHttpProvider.this, chunk))) {
-                            if (chunk instanceof LastHttpContent) {
-                                updateHeadersAndInterrupt(handler, new ResponseHeaders(future.getURI(), future.getHttpResponse(), NettyAsyncHttpProvider.this, (LastHttpContent) chunk));
+                    try {
+                        if (handler != null) {
+                            boolean last = chunk instanceof LastHttpContent;
+                            if (last || updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), NettyAsyncHttpProvider.this, chunk))) {
+                                if (chunk instanceof LastHttpContent) {
+                                    updateHeadersAndInterrupt(handler, new ResponseHeaders(future.getURI(), future.getHttpResponse(), NettyAsyncHttpProvider.this, (LastHttpContent) chunk));
+                                }
+                                finishUpdate(future, ctx, !last);
                             }
-                            finishUpdate(future, ctx, !last);
                         }
+                    } finally {
+                        chunk.release();
                     }
                 }
             } catch (Exception t) {

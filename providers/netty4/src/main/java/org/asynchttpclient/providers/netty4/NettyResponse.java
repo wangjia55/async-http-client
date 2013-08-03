@@ -15,27 +15,22 @@
  */
 package org.asynchttpclient.providers.netty4;
 
-import org.asynchttpclient.Cookie;
-import org.asynchttpclient.HttpResponseBodyPart;
-import org.asynchttpclient.HttpResponseHeaders;
-import org.asynchttpclient.HttpResponseStatus;
-import org.asynchttpclient.providers.ResponseBase;
-import org.asynchttpclient.providers.netty4.util.ByteBufUtil;
-import org.asynchttpclient.util.AsyncHttpProviderUtils;
-import org.asynchttpclient.org.jboss.netty.handler.codec.http.CookieDecoder;
-
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
-import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.ByteBufInputStream;
-import io.netty.buffer.Unpooled;
+import org.asynchttpclient.Cookie;
+import org.asynchttpclient.HttpResponseBodyPart;
+import org.asynchttpclient.HttpResponseHeaders;
+import org.asynchttpclient.HttpResponseStatus;
+import org.asynchttpclient.org.jboss.netty.handler.codec.http.CookieDecoder;
+import org.asynchttpclient.providers.ResponseBase;
+import org.asynchttpclient.util.AsyncHttpProviderUtils;
 
 /**
  * Wrapper around the {@link org.asynchttpclient.Response} API.
@@ -76,12 +71,21 @@ public class NettyResponse extends ResponseBase {
 
     /* @Override */
     public byte[] getResponseBodyAsBytes() throws IOException {
-        return ByteBufUtil.byteBuf2bytes(getResponseBodyAsByteBuf());
+        return getResponseBodyAsByteBuffer().array();
     }
 
     /* @Override */
     public ByteBuffer getResponseBodyAsByteBuffer() throws IOException {
-        return getResponseBodyAsByteBuf().nioBuffer();
+
+        int length = 0;
+        for (HttpResponseBodyPart part: bodyParts)
+            length += part.length();
+
+        ByteBuffer target = ByteBuffer.wrap(new byte[length]);
+        for (HttpResponseBodyPart part: bodyParts)
+            target.put(part.getBodyPartBytes());
+
+        return target;
     }
 
     /* @Override */
@@ -91,31 +95,11 @@ public class NettyResponse extends ResponseBase {
 
     /* @Override */
     public String getResponseBody(String charset) throws IOException {
-        return getResponseBodyAsByteBuf().toString(Charset.forName(calculateCharset(charset)));
+        return new String(getResponseBodyAsBytes(), calculateCharset(charset));
     }
 
     /* @Override */
     public InputStream getResponseBodyAsStream() throws IOException {
-        return new ByteBufInputStream(getResponseBodyAsByteBuf());
-    }
-
-    public ByteBuf getResponseBodyAsByteBuf() throws IOException {
-        ByteBuf b = null;
-        switch (bodyParts.size()) {
-        case 0:
-            b = Unpooled.EMPTY_BUFFER;
-            break;
-        case 1:
-            b = ResponseBodyPart.class.cast(bodyParts.get(0)).getByteBuf();
-            break;
-        default:
-            ByteBuf[] channelBuffers = new ByteBuf[bodyParts.size()];
-            for (int i = 0; i < bodyParts.size(); i++) {
-                channelBuffers[i] = ResponseBodyPart.class.cast(bodyParts.get(i)).getByteBuf();
-            }
-            b = Unpooled.wrappedBuffer(channelBuffers);
-        }
-
-        return b;
+        return new ByteArrayInputStream(getResponseBodyAsBytes());
     }
 }

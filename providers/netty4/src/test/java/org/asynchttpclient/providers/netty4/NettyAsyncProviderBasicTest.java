@@ -30,7 +30,7 @@ public class NettyAsyncProviderBasicTest extends AsyncProvidersBasicTest {
     @Override
     protected AsyncHttpProviderConfig getProviderConfig() {
         final NettyAsyncHttpProviderConfig config = new NettyAsyncHttpProviderConfig();
-        config.addProperty("tcpNoDelay", true);
+        config.addProperty("TCP_NODELAY", true);
         return config;
     }
 }
