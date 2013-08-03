@@ -41,8 +41,12 @@ public class ResponseBodyPart extends HttpResponseBodyPart {
     public ResponseBodyPart(URI uri, AsyncHttpProvider provider, HttpContent chunk) {
         super(uri, provider);
         ByteBuf byteBuf = chunk.content();
-        bytes = new byte[byteBuf.readableBytes()];
-        System.arraycopy(byteBuf.nioBuffer().array(), 0, bytes, 0, bytes.length);
+        int length = byteBuf.readableBytes();
+        // FIXME constant
+        bytes = new byte[length];
+        if (length > 0) {
+            System.arraycopy(byteBuf.nioBuffer().array(), 0, bytes, 0, bytes.length);
+        }
         isLast = chunk instanceof LastHttpContent;
     }
 

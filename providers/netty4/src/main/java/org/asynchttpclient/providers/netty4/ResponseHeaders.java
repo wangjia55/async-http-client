@@ -15,46 +15,46 @@
  */
 package org.asynchttpclient.providers.netty4;
 
-import org.asynchttpclient.AsyncHttpProvider;
-import org.asynchttpclient.FluentCaseInsensitiveStringsMap;
-import org.asynchttpclient.HttpResponseHeaders;
-import io.netty.handler.codec.http.HttpResponse;
-import io.netty.handler.codec.http.LastHttpContent;
+import io.netty.handler.codec.http.HttpHeaders;
 
 import java.net.URI;
 import java.util.Map;
+
+import org.asynchttpclient.AsyncHttpProvider;
+import org.asynchttpclient.FluentCaseInsensitiveStringsMap;
+import org.asynchttpclient.HttpResponseHeaders;
 
 /**
  * A class that represent the HTTP headers.
  */
 public class ResponseHeaders extends HttpResponseHeaders {
 
-    private final LastHttpContent trailingHeaders;
-    private final HttpResponse response;
+    private final HttpHeaders responseHeaders;
+    private final HttpHeaders trailingHeaders;
     private final FluentCaseInsensitiveStringsMap headers;
 
-    public ResponseHeaders(URI uri, HttpResponse response, AsyncHttpProvider provider) {
+    public ResponseHeaders(URI uri, HttpHeaders responseHeaders, AsyncHttpProvider provider) {
         super(uri, provider, false);
+        this.responseHeaders = responseHeaders;
         this.trailingHeaders = null;
-        this.response = response;
         headers = computerHeaders();
     }
 
-    public ResponseHeaders(URI uri, HttpResponse response, AsyncHttpProvider provider, LastHttpContent traillingHeaders) {
+    public ResponseHeaders(URI uri,HttpHeaders responseHeaders, AsyncHttpProvider provider, HttpHeaders traillingHeaders) {
         super(uri, provider, true);
+        this.responseHeaders = responseHeaders;
         this.trailingHeaders = traillingHeaders;
-        this.response = response;
         headers = computerHeaders();
     }
 
     private FluentCaseInsensitiveStringsMap computerHeaders() {
         FluentCaseInsensitiveStringsMap h = new FluentCaseInsensitiveStringsMap();
-        for (Map.Entry<String, String> header: response.headers()) {
+        for (Map.Entry<String, String> header: responseHeaders) {
             h.add(header.getKey(), header.getValue());
         }
 
         if (trailingHeaders != null) {
-            for (Map.Entry<String, String> header:  trailingHeaders.trailingHeaders()) {
+            for (Map.Entry<String, String> header:  trailingHeaders) {
                 h.add(header.getKey(), header.getValue());
             }
         }

@@ -1454,10 +1454,6 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         return handler.onStatusReceived(c) != STATE.CONTINUE;
     }
 
-    private final boolean updateHeadersAndInterrupt(AsyncHandler<?> handler, HttpResponseHeaders c) throws Exception {
-        return handler.onHeadersReceived(c) != STATE.CONTINUE;
-    }
-
     private final boolean updateBodyAndInterrupt(final NettyResponseFuture<?> future, AsyncHandler<?> handler, HttpResponseBodyPart c) throws Exception {
         boolean state = handler.onBodyPartReceived(c) != STATE.CONTINUE;
         if (c.closeUnderlyingConnection()) {
@@ -2054,7 +2050,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     Realm realm = request.getRealm() != null ? request.getRealm() : config.getRealm();
 
                     HttpResponseStatus status = new ResponseStatus(future.getURI(), response, NettyAsyncHttpProvider.this);
-                    HttpResponseHeaders responseHeaders = new ResponseHeaders(future.getURI(), response, NettyAsyncHttpProvider.this);
+                    HttpResponseHeaders responseHeaders = new ResponseHeaders(future.getURI(), response.headers(), NettyAsyncHttpProvider.this);
                     FilterContext fc = new FilterContext.FilterContextBuilder().asyncHandler(handler).request(request).responseStatus(status).responseHeaders(responseHeaders).build();
 
                     for (ResponseFilter asyncFilter : config.getResponseFilters()) {
@@ -2180,7 +2176,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     if (!future.getAndSetStatusReceived(true) && updateStatusAndInterrupt(handler, status)) {
                         finishUpdate(future, ctx, HttpHeaders.isTransferEncodingChunked(response));
                         return;
-                    } else if (updateHeadersAndInterrupt(handler, responseHeaders)) {
+                    } else if (handler.onHeadersReceived(responseHeaders) != STATE.CONTINUE) {
                         finishUpdate(future, ctx, HttpHeaders.isTransferEncodingChunked(response));
                         return;
                     }
@@ -2190,11 +2186,24 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
                     try {
                         if (handler != null) {
+                            boolean interrupt = false;
                             boolean last = chunk instanceof LastHttpContent;
-                            if (last || updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), NettyAsyncHttpProvider.this, chunk))) {
-                                if (chunk instanceof LastHttpContent) {
-                                    updateHeadersAndInterrupt(handler, new ResponseHeaders(future.getURI(), future.getHttpResponse(), NettyAsyncHttpProvider.this, (LastHttpContent) chunk));
+                            // FIXME
+                            // Netty 3 provider is broken: in case of trailing headers, onHeadersReceived should be called before updateBodyAndInterrupt
+                            if (last) {
+                                LastHttpContent lastChunk = (LastHttpContent) chunk;
+                                HttpHeaders trailingHeaders = lastChunk.trailingHeaders();
+                                if (!trailingHeaders.isEmpty()) {
+                                    System.err.println(trailingHeaders);
+                                    interrupt = handler.onHeadersReceived(new ResponseHeaders(future.getURI(), future.getHttpResponse().headers(), NettyAsyncHttpProvider.this, trailingHeaders)) != STATE.CONTINUE;
                                 }
+                            }
+
+                            if (!interrupt && chunk.content().readableBytes() > 0) {
+                                interrupt = updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), NettyAsyncHttpProvider.this, chunk));
+                            }
+
+                            if (interrupt || last) {
                                 finishUpdate(future, ctx, !last);
                             }
                         }
@@ -2259,7 +2268,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 HttpResponse response = (HttpResponse) e;
 
                 HttpResponseStatus s = new ResponseStatus(future.getURI(), response, NettyAsyncHttpProvider.this);
-                HttpResponseHeaders responseHeaders = new ResponseHeaders(future.getURI(), response, NettyAsyncHttpProvider.this);
+                HttpResponseHeaders responseHeaders = new ResponseHeaders(future.getURI(), response.headers(), NettyAsyncHttpProvider.this);
                 FilterContext<?> fc = new FilterContext.FilterContextBuilder().asyncHandler(h).request(request).responseStatus(s).responseHeaders(responseHeaders).build();
                 for (ResponseFilter asyncFilter : config.getResponseFilters()) {
                     try {
@@ -2332,7 +2341,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 }
 
 
-                if (frame.content() != null) {
+                if (frame.content() != null && frame.content().readableBytes() > 0) {
                     HttpContent webSocketChunk = new DefaultHttpContent(Unpooled.wrappedBuffer(frame.content()));
                     ResponseBodyPart rp = new ResponseBodyPart(future.getURI(), NettyAsyncHttpProvider.this, webSocketChunk);
                     h.onBodyPartReceived(rp);
