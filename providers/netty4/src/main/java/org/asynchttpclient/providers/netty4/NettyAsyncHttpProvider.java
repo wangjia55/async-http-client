@@ -1095,8 +1095,16 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
     @Override
     public void channelRead(final ChannelHandlerContext ctx, Object e) throws Exception {
+
+        // FIXME call to super.channelRead decrease the retain count, have to increase it in order to  use it in Protocol.handle
+        if (e instanceof HttpContent) {
+            HttpContent.class.cast(e).content().retain();
+        }
+
         // call super to reset the read timeout
+        // FIXME really?
         super.channelRead(ctx, e);
+
         IN_IO_THREAD.set(Boolean.TRUE);
         
         Object attachment = ctx.attr(DEFAULT_ATTRIBUTE).get();

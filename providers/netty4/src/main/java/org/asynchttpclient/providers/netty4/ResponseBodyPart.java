@@ -58,7 +58,7 @@ public class ResponseBodyPart extends HttpResponseBodyPart {
             return bp;
         }
 
-        ByteBuf b = getChannelBuffer();
+        ByteBuf b = getByteBuf();
         byte[] rb = b.nioBuffer().array();
         bytes.set(rb);
         return rb;
@@ -76,7 +76,7 @@ public class ResponseBodyPart extends HttpResponseBodyPart {
     
     @Override
     public int writeTo(OutputStream outputStream) throws IOException {
-        ByteBuf b = getChannelBuffer();
+        ByteBuf b = getByteBuf();
         int available = b.readableBytes();
         if (available > 0) {
             b.getBytes(b.readerIndex(), outputStream, available);
@@ -89,7 +89,7 @@ public class ResponseBodyPart extends HttpResponseBodyPart {
         return ByteBuffer.wrap(getBodyPartBytes());
     }
 
-    public ByteBuf getChannelBuffer() {
+    public ByteBuf getByteBuf() {
         return chunk.content();
     }
 
@@ -119,5 +119,9 @@ public class ResponseBodyPart extends HttpResponseBodyPart {
 
     protected HttpContent chunk() {
         return chunk;
+    }
+
+    public void freeUnderlyingByteBuff() {
+        chunk.content().release();
     }
 }

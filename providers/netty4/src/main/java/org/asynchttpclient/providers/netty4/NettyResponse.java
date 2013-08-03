@@ -76,12 +76,12 @@ public class NettyResponse extends ResponseBase {
 
     /* @Override */
     public byte[] getResponseBodyAsBytes() throws IOException {
-        return ByteBufUtil.byteBuf2bytes(getResponseBodyAsChannelBuffer());
+        return ByteBufUtil.byteBuf2bytes(getResponseBodyAsByteBuf());
     }
 
     /* @Override */
     public ByteBuffer getResponseBodyAsByteBuffer() throws IOException {
-        return getResponseBodyAsChannelBuffer().nioBuffer();
+        return getResponseBodyAsByteBuf().nioBuffer();
     }
 
     /* @Override */
@@ -91,27 +91,27 @@ public class NettyResponse extends ResponseBase {
 
     /* @Override */
     public String getResponseBody(String charset) throws IOException {
-        return getResponseBodyAsChannelBuffer().toString(Charset.forName(calculateCharset(charset)));
+        return getResponseBodyAsByteBuf().toString(Charset.forName(calculateCharset(charset)));
     }
 
     /* @Override */
     public InputStream getResponseBodyAsStream() throws IOException {
-        return new ByteBufInputStream(getResponseBodyAsChannelBuffer());
+        return new ByteBufInputStream(getResponseBodyAsByteBuf());
     }
 
-    public ByteBuf getResponseBodyAsChannelBuffer() throws IOException {
+    public ByteBuf getResponseBodyAsByteBuf() throws IOException {
         ByteBuf b = null;
         switch (bodyParts.size()) {
         case 0:
             b = Unpooled.EMPTY_BUFFER;
             break;
         case 1:
-            b = ResponseBodyPart.class.cast(bodyParts.get(0)).getChannelBuffer();
+            b = ResponseBodyPart.class.cast(bodyParts.get(0)).getByteBuf();
             break;
         default:
             ByteBuf[] channelBuffers = new ByteBuf[bodyParts.size()];
             for (int i = 0; i < bodyParts.size(); i++) {
-                channelBuffers[i] = ResponseBodyPart.class.cast(bodyParts.get(i)).getChannelBuffer();
+                channelBuffers[i] = ResponseBodyPart.class.cast(bodyParts.get(i)).getByteBuf();
             }
             b = Unpooled.wrappedBuffer(channelBuffers);
         }
