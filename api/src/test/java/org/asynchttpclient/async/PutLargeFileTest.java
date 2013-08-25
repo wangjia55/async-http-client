@@ -98,8 +98,6 @@ public abstract class PutLargeFileTest extends AbstractBasicTest {
                     total += count;
                 }
 
-                System.err.println("consumed " + total + " bytes.");
-
                 resp.setStatus(200);
                 resp.getOutputStream().flush();
                 resp.getOutputStream().close();

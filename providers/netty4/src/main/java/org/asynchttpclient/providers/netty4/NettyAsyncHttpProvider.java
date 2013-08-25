@@ -41,9 +41,11 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.channel.socket.oio.OioSocketChannel;
 import io.netty.handler.codec.PrematureChannelClosureException;
-import io.netty.handler.codec.http.DefaultFullHttpRequest;
-import io.netty.handler.codec.http.DefaultHttpContent;
+import io.netty.handler.codec.http.DefaultHttpRequest;
 import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.DefaultHttpContent;
+import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.DefaultFullHttpRequest;
 import io.netty.handler.codec.http.HttpClientCodec;
 import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.HttpContentCompressor;
@@ -63,6 +65,7 @@ import io.netty.handler.codec.http.websocketx.WebSocket08FrameEncoder;
 import io.netty.handler.codec.http.websocketx.WebSocketFrame;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.stream.ChunkedFile;
+import io.netty.handler.stream.ChunkedStream;
 import io.netty.handler.stream.ChunkedWriteHandler;
 import io.netty.util.AbstractReferenceCounted;
 import io.netty.util.AttributeKey;
@@ -70,6 +73,7 @@ import io.netty.util.AttributeKey;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.RandomAccessFile;
 import java.lang.reflect.Field;
 import java.net.ConnectException;
@@ -161,7 +165,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
     private final Bootstrap secureBootstrap;
     private final Bootstrap webSocketBootstrap;
     private final Bootstrap secureWebSocketBootstrap;
-    private /* final */ EventLoopGroup eventLoop;
+    private EventLoopGroup eventLoop;
     private final static int MAX_BUFFERED_BYTES = 8192;
     private final AsyncHttpClientConfig config;
     private final AtomicBoolean isClose = new AtomicBoolean(false);
@@ -428,7 +432,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         return channel;
     }
 
-    protected final <T> void writeRequest(final Channel channel, final AsyncHttpClientConfig config, final NettyResponseFuture<T> future, final FullHttpRequest nettyRequest) {
+    protected final <T> void writeRequest(final Channel channel, final AsyncHttpClientConfig config, final NettyResponseFuture<T> future, final HttpRequest nettyRequest) {
         try {
             /**
              * If the channel is dead because it was pooled and the remote server decided to close it, we just let it go and the closeChannel do it's work.
@@ -441,11 +445,6 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             if (!future.getNettyRequest().getMethod().equals(HttpMethod.CONNECT)) {
                 BodyGenerator bg = future.getRequest().getBodyGenerator();
                 if (bg != null) {
-                    // Netty issue with chunking.
-                    if (bg instanceof InputStreamBodyGenerator) {
-                        InputStreamBodyGenerator.class.cast(bg).patchNettyChunkingIssue(true);
-                    }
-
                     try {
                         body = bg.createBody();
                     } catch (IOException ex) {
@@ -471,7 +470,8 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         h.add(entries.getKey(), entries.getValue());
                 }
 
-                TransferCompletionHandler.class.cast(future.getAsyncHandler()).transferAdapter(new NettyTransferAdapter(h, nettyRequest.content(), future.getRequest().getFile()));
+                ByteBuf content = nettyRequest instanceof FullHttpRequest? FullHttpRequest.class.cast(nettyRequest).content(): Unpooled.buffer(0);
+                TransferCompletionHandler.class.cast(future.getAsyncHandler()).transferAdapter(new NettyTransferAdapter(h, content, future.getRequest().getFile()));
             }
 
             // Leave it to true.
@@ -504,7 +504,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                             if (channel.pipeline().get(SslHandler.class) != null) {
                                 writeFuture = channel.write(new ChunkedFile(raf, 0, fileLength, MAX_BUFFERED_BYTES), channel.newProgressivePromise());
                             } else {
-                                final FileRegion region = new OptimizedFileRegion(raf, 0, fileLength);
+                                FileRegion region = new OptimizedFileRegion(raf, 0, fileLength);
                                 writeFuture = channel.write(region, channel.newProgressivePromise());
                             }
                             writeFuture.addListener(new ProgressListener(false, future.getAsyncHandler(), future) {
@@ -534,17 +534,22 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                             BodyFileRegion bodyFileRegion = new BodyFileRegion((RandomAccessBody) body);
                             writeFuture = channel.write(bodyFileRegion, channel.newProgressivePromise());
                         } else {
-                            BodyChunkedInput bodyChunkedInput = new BodyChunkedInput(body);
                             BodyGenerator bg = future.getRequest().getBodyGenerator();
-                            if (bg instanceof FeedableBodyGenerator) {
-                                ((FeedableBodyGenerator) bg).setListener(new FeedListener() {
-                                    @Override
-                                    public void onContentAdded() {
-                                        channel.pipeline().get(ChunkedWriteHandler.class).resumeTransfer();
-                                    }
-                                });
+                            if (bg instanceof InputStreamBodyGenerator) {
+                                InputStream is = InputStreamBodyGenerator.class.cast(bg).getInputStream();
+                                writeFuture = channel.write(new ChunkedStream(is), channel.newProgressivePromise());
+                            } else {
+                                BodyChunkedInput bodyChunkedInput = new BodyChunkedInput(body);
+                                if (bg instanceof FeedableBodyGenerator) {
+                                    FeedableBodyGenerator.class.cast(bg).setListener(new FeedListener() {
+                                        @Override
+                                        public void onContentAdded() {
+                                            channel.pipeline().get(ChunkedWriteHandler.class).resumeTransfer();
+                                        }
+                                    });
+                                }
+                                writeFuture = channel.write(bodyChunkedInput, channel.newProgressivePromise());
                             }
-                            writeFuture = channel.write(bodyChunkedInput, channel.newProgressivePromise());
                         }
 
                         final Body b = body;
@@ -587,7 +592,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
     }
 
-    protected final static FullHttpRequest buildRequest(AsyncHttpClientConfig config, Request request, URI uri, boolean allowConnect, ByteBuf buffer, ProxyServer proxyServer) throws IOException {
+    protected final static HttpRequest buildRequest(AsyncHttpClientConfig config, Request request, URI uri, boolean allowConnect, ByteBuf buffer, ProxyServer proxyServer) throws IOException {
 
         String method = request.getMethod();
         if (allowConnect && proxyServer != null && isSecure(uri)) {
@@ -602,7 +607,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         return spnegoEngine;
     }
 
-    private static FullHttpRequest construct(AsyncHttpClientConfig config, Request request, HttpMethod m, URI uri, ByteBuf buffer, ProxyServer proxyServer) throws IOException {
+    private static HttpRequest construct(AsyncHttpClientConfig config, Request request, HttpMethod m, URI uri, ByteBuf buffer, ProxyServer proxyServer) throws IOException {
 
         String host = null;
         HttpVersion httpVersion;
@@ -770,6 +775,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             headers.put(HttpHeaders.Names.USER_AGENT, AsyncHttpProviderUtils.constructUserAgent(NettyAsyncHttpProvider.class, config));
         }
 
+        boolean hasDeferedBody = false;
         if (!m.equals(HttpMethod.CONNECT)) {
             if (isNonEmpty(request.getCookies())) {
                 headers.put(HttpHeaders.Names.COOKIE, CookieEncoder.encodeClientSide(request.getCookies(), config.isRfc6265CookieEncoding()));
@@ -779,7 +785,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             if (!"HEAD".equals(reqType) && !"OPTION".equals(reqType) && !"TRACE".equals(reqType)) {
 
                 String bodyCharset = request.getBodyEncoding() == null ? DEFAULT_CHARSET : request.getBodyEncoding();
-
+                
                 // We already have processed the body.
                 if (buffer != null && buffer.writerIndex() != 0) {
                     headers.put(HttpHeaders.Names.CONTENT_LENGTH, buffer.writerIndex());
@@ -823,6 +829,8 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     headers.put(HttpHeaders.Names.CONTENT_TYPE, mre.getContentType());
                     headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(mre.getContentLength()));
 
+                    hasDeferedBody = true;
+
                 } else if (request.getEntityWriter() != null) {
                     int length = getPredefinedContentLength(request, headers);
 
@@ -840,11 +848,23 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         throw new IOException(String.format("File %s is not a file or doesn't exist", file.getAbsolutePath()));
                     }
                     headers.put(HttpHeaders.Names.CONTENT_LENGTH, file.length());
+                    hasDeferedBody = true;
+
+                } else if (request.getBodyGenerator() != null) {
+                    hasDeferedBody = true;
                 }
             }
         }
 
-        FullHttpRequest nettyRequest = new DefaultFullHttpRequest(httpVersion, m, requestUri, content != null? content: Unpooled.buffer(0));
+        HttpRequest nettyRequest;
+        if (hasDeferedBody) {
+            nettyRequest = new DefaultHttpRequest(httpVersion, m, requestUri);
+        } else 
+            if (content != null) {
+            nettyRequest = new DefaultFullHttpRequest(httpVersion, m, requestUri, content);
+        } else {
+            nettyRequest = new DefaultFullHttpRequest(httpVersion, m, requestUri);
+        }
         for (Entry<String, Object> header: headers.entrySet()) {
             nettyRequest.headers().set(header.getKey(), header.getValue());
         }
@@ -922,13 +942,13 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         }
 
         ByteBuf bufferedBytes = null;
-        if (f != null && f.getRequest().getFile() == null && !f.getNettyRequest().getMethod().equals(HttpMethod.CONNECT)) {
-            bufferedBytes = f.getNettyRequest().content();
+        if (f != null && f.getRequest().getFile() == null && !f.getNettyRequest().getMethod().equals(HttpMethod.CONNECT) && f.getNettyRequest() instanceof FullHttpRequest) {
+            bufferedBytes = FullHttpRequest.class.cast(f.getNettyRequest()).content();
         }
 
         boolean useSSl = isSecure(uri) && !useProxy;
         if (channel != null && channel.isOpen() && channel.isActive()) {
-            FullHttpRequest nettyRequest = null;
+            HttpRequest nettyRequest = null;
 
             if (f == null) {
             	nettyRequest = buildRequest(config, request, uri, false, bufferedBytes, proxyServer);
@@ -993,11 +1013,11 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             }
         }
 
-        NettyConnectListener<T> c = new NettyConnectListener.Builder<T>(config, request, asyncHandler, f, this, bufferedBytes).build(uri);
+        NettyConnectListener<T> cl = new NettyConnectListener.Builder<T>(config, request, asyncHandler, f, this, bufferedBytes).build(uri);
         boolean avoidProxy = ProxyUtils.avoidProxy(proxyServer, uri.getHost());
 
         if (useSSl) {
-            constructSSLPipeline(c);
+            constructSSLPipeline(cl);
         }
 
         ChannelFuture channelFuture;
@@ -1024,8 +1044,8 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             if (acquiredConnection) {
                 freeConnections.release();
             }
-            abort(c.future(), t.getCause() == null ? t : t.getCause());
-            return c.future();
+            abort(cl.future(), t.getCause() == null ? t : t.getCause());
+            return cl.future();
         }
 
         // FIXME
@@ -1040,11 +1060,11 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 }
                 // FIXME false or true?
                 channelFuture.cancel(false);
-                abort(c.future(), new ConnectException(String.format("Connect operation to %s timeout %s", uri, timeOut)));
+                abort(cl.future(), new ConnectException(String.format("Connect operation to %s timeout %s", uri, timeOut)));
             }
 
             try {
-                c.operationComplete(channelFuture);
+                cl.operationComplete(channelFuture);
             } catch (Exception e) {
                 if (acquiredConnection) {
                     freeConnections.release();
@@ -1059,16 +1079,16 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 throw ioe;
             }
         } else {
-            channelFuture.addListener(c);
+            channelFuture.addListener(cl);
         }
 
-        log.debug("\nNon cached request \n{}\n\nusing Channel \n{}\n", c.future().getNettyRequest(), channelFuture.channel());
+        log.debug("\nNon cached request \n{}\n\nusing Channel \n{}\n", cl.future().getNettyRequest(), channelFuture.channel());
 
-        if (!c.future().isCancelled() || !c.future().isDone()) {
+        if (!cl.future().isCancelled() || !cl.future().isDone()) {
             openChannels.add(channelFuture.channel());
-            c.future().attachChannel(channelFuture.channel(), false);
+            cl.future().attachChannel(channelFuture.channel(), false);
         }
-        return c.future();
+        return cl.future();
     }
 
     private void closeChannel(final ChannelHandlerContext ctx) {
@@ -1102,13 +1122,13 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
     public void channelRead(final ChannelHandlerContext ctx, Object e) throws Exception {
 
         // FIXME call to super.channelRead decrease the retain count, have to increase it in order to  use it in Protocol.handle
-        if (e instanceof HttpContent) {
-            HttpContent.class.cast(e).content().retain();
-        }
-
-        // call super to reset the read timeout
-        // FIXME really?
-        super.channelRead(ctx, e);
+//        if (e instanceof HttpContent) {
+//            HttpContent.class.cast(e).content().retain();
+//        }
+//
+//        // call super to reset the read timeout
+//        // FIXME really?
+//        super.channelRead(ctx, e);
 
         IN_IO_THREAD.set(Boolean.TRUE);
         
@@ -1299,11 +1319,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
     }
 
     private void nextRequest(final Request request, final NettyResponseFuture<?> future) throws IOException {
-        nextRequest(request, future, true);
-    }
-
-    private void nextRequest(final Request request, final NettyResponseFuture<?> future, final boolean useCache) throws IOException {
-        execute(request, future, useCache, true, true);
+        execute(request, future, true, true, true);
     }
 
     private void abort(NettyResponseFuture<?> future, Throwable t) {
@@ -1471,7 +1487,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable e) throws Exception {
         Channel channel = ctx.channel();
-        Throwable cause = e.getCause();
+        Throwable cause = e.getCause() != null? e.getCause(): e;
         NettyResponseFuture<?> future = null;
 
         if (e.getCause() instanceof PrematureChannelClosureException) {
@@ -1615,7 +1631,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         return length;
     }
 
-    public static <T> NettyResponseFuture<T> newFuture(URI uri, Request request, AsyncHandler<T> asyncHandler, FullHttpRequest nettyRequest, AsyncHttpClientConfig config, NettyAsyncHttpProvider provider, ProxyServer proxyServer) {
+    public static <T> NettyResponseFuture<T> newFuture(URI uri, Request request, AsyncHandler<T> asyncHandler, HttpRequest nettyRequest, AsyncHttpClientConfig config, NettyAsyncHttpProvider provider, ProxyServer proxyServer) {
 
         int requestTimeout = AsyncHttpProviderUtils.requestTimeout(config, request);
         NettyResponseFuture<T> f = new NettyResponseFuture<T>(uri,//
@@ -2028,7 +2044,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 return;
             }
 
-            FullHttpRequest nettyRequest = future.getNettyRequest();
+            HttpRequest nettyRequest = future.getNettyRequest();
             AsyncHandler handler = future.getAsyncHandler();
             Request request = future.getRequest();
             ProxyServer proxyServer = future.getProxyServer();

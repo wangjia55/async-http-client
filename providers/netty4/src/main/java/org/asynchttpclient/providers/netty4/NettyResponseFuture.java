@@ -22,7 +22,7 @@ import org.asynchttpclient.ProxyServer;
 import org.asynchttpclient.Request;
 import org.asynchttpclient.listenable.AbstractListenableFuture;
 import io.netty.channel.Channel;
-import io.netty.handler.codec.http.FullHttpRequest;
+import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,7 +61,7 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
     private final int requestTimeoutInMs;
     private final int idleConnectionTimeoutInMs;
     private Request request;
-    private FullHttpRequest nettyRequest;
+    private HttpRequest nettyRequest;
     private final AtomicReference<V> content = new AtomicReference<V>();
     private URI uri;
     private boolean keepAlive = true;
@@ -90,7 +90,7 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
     public NettyResponseFuture(URI uri,//
             Request request,//
             AsyncHandler<V> asyncHandler,//
-            FullHttpRequest nettyRequest,//
+            HttpRequest nettyRequest,//
             int requestTimeoutInMs,//
             int idleConnectionTimeoutInMs,//
             NettyAsyncHttpProvider asyncHttpProvider,//
@@ -341,11 +341,11 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
         return request;
     }
 
-    public final FullHttpRequest getNettyRequest() {
+    public final HttpRequest getNettyRequest() {
         return nettyRequest;
     }
 
-    protected final void setNettyRequest(FullHttpRequest nettyRequest) {
+    protected final void setNettyRequest(HttpRequest nettyRequest) {
         this.nettyRequest = nettyRequest;
     }
 
