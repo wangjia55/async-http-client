@@ -317,7 +317,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         }
 
         webSocketBootstrap.handler(new ChannelInitializer<Channel>() {
-            /* @Override */
+            @Override
             protected void initChannel(Channel ch) throws Exception {
                 ChannelPipeline pipeline = ch.pipeline();
                 pipeline.addLast("http-decoder", new HttpResponseDecoder());
@@ -435,9 +435,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
     protected final <T> void writeRequest(final Channel channel, final AsyncHttpClientConfig config, final NettyResponseFuture<T> future) {
         try {
-            /**
-             * If the channel is dead because it was pooled and the remote server decided to close it, we just let it go and the closeChannel do it's work.
-             */
+            // If the channel is dead because it was pooled and the remote server decided to close it, we just let it go and the closeChannel do it's work.
             if (!channel.isOpen() || !channel.isActive()) {
                 return;
             }
@@ -762,8 +760,8 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             }
         }
 
-        // Add default accept headers.
-        if (request.getHeaders().getFirstValue(HttpHeaders.Names.ACCEPT) == null) {
+        // Add default accept headers
+        if (!request.getHeaders().containsKey(HttpHeaders.Names.ACCEPT)) {
             headers.put(HttpHeaders.Names.ACCEPT, "*/*");
         }
 
@@ -895,14 +893,12 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         }
     }
 
-    /* @Override */
-
+    @Override
     public Response prepareResponse(final HttpResponseStatus status, final HttpResponseHeaders headers, final List<HttpResponseBodyPart> bodyParts) {
         return new NettyResponse(status, headers, bodyParts);
     }
 
-    /* @Override */
-
+    @Override
     public <T> ListenableFuture<T> execute(Request request, final AsyncHandler<T> asyncHandler) throws IOException {
         return doConnect(request, asyncHandler, null, true, executeConnectAsync, false);
     }
@@ -2283,7 +2279,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             }
         }
 
-        // @Override
+        @Override
         public void handle(ChannelHandlerContext ctx, Object e) throws Exception {
             Object attachment = ctx.attr(DEFAULT_ATTRIBUTE).get();
             NettyResponseFuture future = NettyResponseFuture.class.cast(attachment);
@@ -2321,7 +2317,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 if (redirect(request, future, response, ctx))
                     return;
 
-                final io.netty.handler.codec.http.HttpResponseStatus status = new io.netty.handler.codec.http.HttpResponseStatus(101, "Web Socket Protocol Handshake");
+                final io.netty.handler.codec.http.HttpResponseStatus status = io.netty.handler.codec.http.HttpResponseStatus.SWITCHING_PROTOCOLS;
 
                 final boolean validStatus = response.getStatus().equals(status);
                 final boolean validUpgrade = response.headers().get(HttpHeaders.Names.UPGRADE) != null;

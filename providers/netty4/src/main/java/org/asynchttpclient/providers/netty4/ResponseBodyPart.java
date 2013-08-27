@@ -15,7 +15,6 @@
  */
 package org.asynchttpclient.providers.netty4;
 
-import io.netty.buffer.ByteBuf;
 import io.netty.handler.codec.http.HttpContent;
 import io.netty.handler.codec.http.LastHttpContent;
 
@@ -28,6 +27,7 @@ import java.nio.ByteBuffer;
 
 import org.asynchttpclient.AsyncHttpProvider;
 import org.asynchttpclient.HttpResponseBodyPart;
+import org.asynchttpclient.providers.netty4.util.ByteBufUtil;
 
 /**
  * A callback class used when an HTTP response body is received.
@@ -40,13 +40,7 @@ public class ResponseBodyPart extends HttpResponseBodyPart {
 
     public ResponseBodyPart(URI uri, AsyncHttpProvider provider, HttpContent chunk) {
         super(uri, provider);
-        ByteBuf byteBuf = chunk.content();
-        int length = byteBuf.readableBytes();
-        // FIXME constant
-        bytes = new byte[length];
-        if (length > 0) {
-            System.arraycopy(byteBuf.nioBuffer().array(), 0, bytes, 0, bytes.length);
-        }
+        bytes = ByteBufUtil.byteBuf2bytes(chunk.content());
         isLast = chunk instanceof LastHttpContent;
     }
 
