@@ -2350,6 +2350,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
                 invokeOnSucces(ctx, h);
                 future.done();
+
             } else if (e instanceof WebSocketFrame) {
 
                 invokeOnSucces(ctx, h);
@@ -2361,7 +2362,6 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 } else if (frame instanceof BinaryWebSocketFrame) {
                     pendingOpcode = OPCODE_BINARY;
                 }
-
 
                 if (frame.content() != null && frame.content().readableBytes() > 0) {
                     HttpContent webSocketChunk = new DefaultHttpContent(Unpooled.wrappedBuffer(frame.content()));

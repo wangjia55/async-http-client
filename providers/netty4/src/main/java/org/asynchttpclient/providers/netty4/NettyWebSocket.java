@@ -47,7 +47,7 @@ public class NettyWebSocket implements WebSocket {
 
     // @Override
     public WebSocket sendMessage(byte[] message) {
-        channel.write(new BinaryWebSocketFrame(wrappedBuffer(message)));
+        channel.writeAndFlush(new BinaryWebSocketFrame(wrappedBuffer(message)));
         return this;
     }
 
@@ -63,7 +63,7 @@ public class NettyWebSocket implements WebSocket {
 
     // @Override
     public WebSocket sendTextMessage(String message) {
-        channel.write(new TextWebSocketFrame(message));
+        channel.writeAndFlush(new TextWebSocketFrame(message));
         return this;
     }
 
@@ -74,13 +74,13 @@ public class NettyWebSocket implements WebSocket {
 
     // @Override
     public WebSocket sendPing(byte[] payload) {
-        channel.write(new PingWebSocketFrame(wrappedBuffer(payload)));
+        channel.writeAndFlush(new PingWebSocketFrame(wrappedBuffer(payload)));
         return this;
     }
 
     // @Override
     public WebSocket sendPong(byte[] payload) {
-        channel.write(new PongWebSocketFrame(wrappedBuffer(payload)));
+        channel.writeAndFlush(new PongWebSocketFrame(wrappedBuffer(payload)));
         return this;
     }
 
