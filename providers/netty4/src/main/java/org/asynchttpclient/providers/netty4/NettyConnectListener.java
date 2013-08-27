@@ -45,19 +45,17 @@ import org.asynchttpclient.util.ProxyUtils;
 /**
  * Non Blocking connect.
  */
+// FIXME Netty 3: NettyConnectListener don't need to be passed the request as the future has it too
 final class NettyConnectListener<T> implements ChannelFutureListener {
     private final static Logger logger = LoggerFactory.getLogger(NettyConnectListener.class);
     private final AsyncHttpClientConfig config;
     private final NettyResponseFuture<T> future;
-    private final HttpRequest nettyRequest;
     private final AtomicBoolean handshakeDone = new AtomicBoolean(false);
 
     private NettyConnectListener(AsyncHttpClientConfig config,
-                                 NettyResponseFuture<T> future,
-                                 HttpRequest nettyRequest) {
+                                 NettyResponseFuture<T> future) {
         this.config = config;
         this.future = future;
-        this.nettyRequest = nettyRequest;
     }
 
     public NettyResponseFuture<T> future() {
@@ -90,7 +88,7 @@ final class NettyConnectListener<T> implements ChannelFutureListener {
             }
         }
 
-        future.provider().writeRequest(channel, config, future, nettyRequest);
+        future.provider().writeRequest(channel, config, future);
     }
     
     private void onFutureFailure(Channel channel, Throwable cause) throws Exception {
@@ -100,7 +98,7 @@ final class NettyConnectListener<T> implements ChannelFutureListener {
                 || cause instanceof ClosedChannelException
                 || future.getState() != NettyResponseFuture.STATE.NEW)) {
 
-            logger.debug("Retrying {} ", nettyRequest);
+            logger.debug("Retrying {} ", future.getNettyRequest());
             if (future.provider().remotelyClosed(channel, future)) {
                 return;
             }
@@ -164,7 +162,7 @@ final class NettyConnectListener<T> implements ChannelFutureListener {
                 future.setNettyRequest(nettyRequest);
                 future.setRequest(request);
             }
-            return new NettyConnectListener<T>(config, future, nettyRequest);
+            return new NettyConnectListener<T>(config, future);
         }
     }
 }
