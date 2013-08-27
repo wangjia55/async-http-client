@@ -2097,10 +2097,11 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                             future.setState(NettyResponseFuture.STATE.NEW);
                             Realm newRealm = null;
                             // NTLM
-                            if (!wwwAuth.contains("Kerberos") && isNTLM(wwwAuth) || wwwAuth.contains("Negotiate")) {
+                            boolean negociate = wwwAuth.contains("Negotiate");
+                            if (!wwwAuth.contains("Kerberos") && (isNTLM(wwwAuth) || negociate)) {
                                 newRealm = ntlmChallenge(wwwAuth, request, proxyServer, headers, realm, future);
                                 // SPNEGO KERBEROS
-                            } else if (wwwAuth.contains("Negotiate")) {
+                            } else if (negociate) {
                                 newRealm = kerberosChallenge(wwwAuth, request, proxyServer, headers, realm, future);
                                 if (newRealm == null) {
                                     future.setIgnoreNextContents(true);
@@ -2148,10 +2149,11 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                             future.setState(NettyResponseFuture.STATE.NEW);
                             Realm newRealm = null;
 
-                            if (!proxyAuth.contains("Kerberos") && (isNTLM(proxyAuth) || (proxyAuth.contains("Negotiate")))) {
+                            boolean negociate = proxyAuth.contains("Negotiate");
+                            if (!proxyAuth.contains("Kerberos") && (isNTLM(proxyAuth) || negociate)) {
                                 newRealm = ntlmProxyChallenge(proxyAuth, request, proxyServer, headers, realm, future);
                                 // SPNEGO KERBEROS
-                            } else if (proxyAuth.contains("Negotiate")) {
+                            } else if (negociate) {
                                 newRealm = kerberosChallenge(proxyAuth, request, proxyServer, headers, realm, future);
                                 if (newRealm == null) {
                                     future.setIgnoreNextContents(true);
