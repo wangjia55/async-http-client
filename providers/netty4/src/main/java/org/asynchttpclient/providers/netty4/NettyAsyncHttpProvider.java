@@ -809,16 +809,16 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     for (final Entry<String, List<String>> paramEntry : request.getParams()) {
                         final String key = paramEntry.getKey();
                         for (final String value : paramEntry.getValue()) {
-                            if (sb.length() > 0) {
-                                sb.append("&");
-                            }
                             UTF8UrlEncoder.appendEncoded(sb, key);
                             sb.append("=");
                             UTF8UrlEncoder.appendEncoded(sb, value);
+                            sb.append("&");
                         }
                     }
-                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(sb.length()));
-                    content = Unpooled.wrappedBuffer(sb.toString().getBytes(bodyCharset));
+                    sb.setLength(sb.length() - 1);
+                    byte[] bytes = sb.toString().getBytes(bodyCharset);
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(bytes.length));
+                    content = Unpooled.wrappedBuffer(bytes);
 
                     if (!request.getHeaders().containsKey(HttpHeaders.Names.CONTENT_TYPE)) {
                         headers.put(HttpHeaders.Names.CONTENT_TYPE, HttpHeaders.Values.APPLICATION_X_WWW_FORM_URLENCODED);
@@ -860,8 +860,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         HttpRequest nettyRequest;
         if (hasDeferedBody) {
             nettyRequest = new DefaultHttpRequest(httpVersion, m, requestUri);
-        } else 
-            if (content != null) {
+        } else if (content != null) {
             nettyRequest = new DefaultFullHttpRequest(httpVersion, m, requestUri, content);
         } else {
             nettyRequest = new DefaultFullHttpRequest(httpVersion, m, requestUri);
@@ -944,9 +943,10 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         }
 
         ByteBuf bufferedBytes = null;
-        if (f != null && f.getRequest().getFile() == null && !f.getNettyRequest().getMethod().equals(HttpMethod.CONNECT) && f.getNettyRequest() instanceof FullHttpRequest) {
-            bufferedBytes = FullHttpRequest.class.cast(f.getNettyRequest()).content();
-        }
+        // FIXME this would make a redirected POST fail
+//        if (f != null && f.getRequest().getFile() == null && !f.getNettyRequest().getMethod().equals(HttpMethod.CONNECT) && f.getNettyRequest() instanceof FullHttpRequest) {
+//            bufferedBytes = FullHttpRequest.class.cast(f.getNettyRequest()).content();
+//        }
 
         boolean useSSl = isSecure(uri) && !useProxy;
         if (channel != null && channel.isOpen() && channel.isActive()) {
