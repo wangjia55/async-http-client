@@ -782,8 +782,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 headers.put(HttpHeaders.Names.COOKIE, CookieEncoder.encodeClientSide(request.getCookies(), config.isRfc6265CookieEncoding()));
             }
 
-            String reqType = request.getMethod();
-            if (!"HEAD".equals(reqType) && !"OPTION".equals(reqType) && !"TRACE".equals(reqType)) {
+            if (!m.equals(HttpMethod.HEAD) && !m.equals(HttpMethod.OPTIONS) && !m.equals(HttpMethod.TRACE)) {
 
                 String bodyCharset = request.getBodyEncoding() == null ? DEFAULT_CHARSET : request.getBodyEncoding();
                 
