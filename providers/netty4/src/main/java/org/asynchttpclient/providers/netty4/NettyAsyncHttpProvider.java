@@ -1115,7 +1115,6 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         if (ctx.channel() != null) {
             openChannels.remove(ctx.channel());
         }
-
     }
 
     @Override
@@ -1965,7 +1964,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
         int statusCode = response.getStatus().code();
         boolean redirectEnabled = request.isRedirectOverrideSet() ? request.isRedirectEnabled() : config.isRedirectEnabled();
-        if (redirectEnabled && statusCode == MOVED_PERMANENTLY.code() || statusCode == FOUND.code() || statusCode == SEE_OTHER.code() || statusCode == TEMPORARY_REDIRECT.code()) {
+        if (redirectEnabled && (statusCode == MOVED_PERMANENTLY.code() || statusCode == FOUND.code() || statusCode == SEE_OTHER.code() || statusCode == TEMPORARY_REDIRECT.code())) {
 
             if (future.incrementAndGetCurrentRedirectCount() < config.getMaxRedirects()) {
                 // We must allow 401 handling again.
@@ -2053,6 +2052,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
                     // store the original headers so we can re-send all them to the handler in case of trailing headers
                     future.setHttpResponse(response);
+                    future.setIgnoreNextContents(false);
 
                     int statusCode = response.getStatus().code();
 
@@ -2084,6 +2084,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     // The request has changed
                     if (fc.replayRequest()) {
                         replayRequest(future, fc, ctx);
+                        future.setIgnoreNextContents(true);
                         return;
                     }
 
@@ -2101,8 +2102,10 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                                 // SPNEGO KERBEROS
                             } else if (wwwAuth.contains("Negotiate")) {
                                 newRealm = kerberosChallenge(wwwAuth, request, proxyServer, headers, realm, future);
-                                if (newRealm == null)
+                                if (newRealm == null) {
+                                    future.setIgnoreNextContents(true);
                                     return;
+                                }
                             } else {
                                 newRealm = new Realm.RealmBuilder().clone(realm).setScheme(realm.getAuthScheme()).setUri(request.getURI().getPath()).setMethodName(request.getMethod()).setUsePreemptiveAuth(true).parseWWWAuthenticateHeader(wwwAuth.get(0)).build();
                             }
@@ -2124,6 +2127,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                             } else {
                                 ac.call();
                             }
+                            future.setIgnoreNextContents(true);
                             return;
                         }
                     }
@@ -2131,6 +2135,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     if (statusCode == CONTINUE.code()) {
                         future.getAndSetWriteHeaders(false);
                         future.getAndSetWriteBody(true);
+                        future.setIgnoreNextContents(true);
                         writeRequest(ctx.channel(), config, future);
                         return;
                     }
@@ -2148,8 +2153,10 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                                 // SPNEGO KERBEROS
                             } else if (proxyAuth.contains("Negotiate")) {
                                 newRealm = kerberosChallenge(proxyAuth, request, proxyServer, headers, realm, future);
-                                if (newRealm == null)
+                                if (newRealm == null) {
+                                    future.setIgnoreNextContents(true);
                                     return;
+                                }
                             } else {
                                 newRealm = future.getRequest().getRealm();
                             }
@@ -2157,6 +2164,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                             Request req = builder.setHeaders(headers).setRealm(newRealm).build();
                             future.setReuseChannel(true);
                             future.setConnectAllowed(true);
+                            future.setIgnoreNextContents(true);
                             execute(req, future);
                             return;
                         }
@@ -2179,12 +2187,15 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         Request req = builder.build();
                         future.setReuseChannel(true);
                         future.setConnectAllowed(false);
+                        future.setIgnoreNextContents(true);
                         execute(req, future);
                         return;
                     }
 
-                    if (redirect(request, future, response, ctx))
+                    if (redirect(request, future, response, ctx)) {
+                        future.setIgnoreNextContents(true);
                         return;
+                    }
 
                     if (!future.getAndSetStatusReceived(true) && updateStatusAndInterrupt(handler, status)) {
                         finishUpdate(future, ctx, HttpHeaders.isTransferEncodingChunked(response));
@@ -2195,13 +2206,14 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     }
                 }
 
-                if (e instanceof HttpContent) {
+                if (e instanceof HttpContent && !future.isIgnoreNextContents()) {
                     HttpContent chunk = (HttpContent) e;
 
                     try {
                         if (handler != null) {
                             boolean interrupt = false;
                             boolean last = chunk instanceof LastHttpContent;
+
                             // FIXME
                             // Netty 3 provider is broken: in case of trailing headers, onHeadersReceived should be called before updateBodyAndInterrupt
                             if (last) {

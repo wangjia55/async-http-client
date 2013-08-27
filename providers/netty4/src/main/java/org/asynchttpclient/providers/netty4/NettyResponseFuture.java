@@ -86,6 +86,7 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
     private boolean allowConnect = false;
     private final ConnectionPoolKeyStrategy connectionPoolKeyStrategy;
     private final ProxyServer proxyServer;
+    private final AtomicBoolean ignoreNextContents = new AtomicBoolean(false);
 
     public NettyResponseFuture(URI uri,//
             Request request,//
@@ -396,6 +397,14 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
 
     public boolean getAndSetStatusReceived(boolean sr) {
         return statusReceived.getAndSet(sr);
+    }
+
+    public void setIgnoreNextContents(boolean b) {
+        ignoreNextContents.set(b);
+    }
+
+    public boolean isIgnoreNextContents() {
+        return ignoreNextContents.get();
     }
 
     /**
