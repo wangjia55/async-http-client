@@ -792,17 +792,17 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     headers.put(HttpHeaders.Names.CONTENT_LENGTH, buffer.writerIndex());
                     content = buffer;
                 } else if (request.getByteData() != null) {
-                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(request.getByteData().length));
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, request.getByteData().length);
                     content = Unpooled.wrappedBuffer(request.getByteData());
                 } else if (request.getStringData() != null) {
                     byte[] bytes = request.getStringData().getBytes(bodyCharset);
-                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(bytes.length));
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, bytes.length);
                     content = Unpooled.wrappedBuffer(bytes);
                 } else if (request.getStreamData() != null) {
                     int[] lengthWrapper = new int[1];
                     byte[] bytes = AsyncHttpProviderUtils.readFully(request.getStreamData(), lengthWrapper);
                     int length = lengthWrapper[0];
-                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(length));
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, length);
                     content = Unpooled.wrappedBuffer(bytes, 0, length);
                 } else if (isNonEmpty(request.getParams())) {
                     StringBuilder sb = new StringBuilder();
@@ -817,7 +817,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     }
                     sb.setLength(sb.length() - 1);
                     byte[] bytes = sb.toString().getBytes(bodyCharset);
-                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(bytes.length));
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, bytes.length);
                     content = Unpooled.wrappedBuffer(bytes);
 
                     if (!request.getHeaders().containsKey(HttpHeaders.Names.CONTENT_TYPE)) {
@@ -828,7 +828,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     MultipartRequestEntity mre = AsyncHttpProviderUtils.createMultipartRequestEntity(request.getParts(), request.getHeaders());
 
                     headers.put(HttpHeaders.Names.CONTENT_TYPE, mre.getContentType());
-                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, String.valueOf(mre.getContentLength()));
+                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, mre.getContentLength());
 
                     hasDeferedBody = true;
 
