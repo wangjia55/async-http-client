@@ -165,7 +165,7 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
             return false;
 
         try {
-            channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(new NettyAsyncHttpProvider.DiscardEvent());
+            channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(NettyAsyncHttpProvider.DiscardEvent.INSTANCE);
             channel.close();
         } catch (Throwable t) {
             // Ignore
@@ -236,7 +236,7 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
             if (expired) {
                 isCancelled.set(true);
                 try {
-                    channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(new NettyAsyncHttpProvider.DiscardEvent());
+                    channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(NettyAsyncHttpProvider.DiscardEvent.INSTANCE);
                     channel.close();
                 } catch (Throwable t) {
                     // Ignore

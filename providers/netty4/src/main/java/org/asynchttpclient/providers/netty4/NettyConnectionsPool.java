@@ -172,7 +172,7 @@ public class NettyConnectionsPool implements ConnectionsPool<String, Channel> {
         }
 
         log.debug("Adding uri: {} for channel {}", uri, channel);
-        channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(new NettyAsyncHttpProvider.DiscardEvent());
+        channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(NettyAsyncHttpProvider.DiscardEvent.INSTANCE);
 
         ConcurrentLinkedQueue<IdleChannel> idleConnectionForHost = connectionsPool.get(uri);
         if (idleConnectionForHost == null) {
@@ -283,7 +283,7 @@ public class NettyConnectionsPool implements ConnectionsPool<String, Channel> {
 
     private void close(Channel channel) {
         try {
-            channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(new NettyAsyncHttpProvider.DiscardEvent());
+            channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(NettyAsyncHttpProvider.DiscardEvent.INSTANCE);
             channel2CreationDate.remove(channel);
             channel.close();
         } catch (Throwable t) {

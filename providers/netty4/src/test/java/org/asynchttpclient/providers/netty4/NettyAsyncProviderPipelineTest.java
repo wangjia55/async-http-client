@@ -76,8 +76,7 @@ public class NettyAsyncProviderPipelineTest extends AbstractBasicTest {
 
         protected void initPlainChannel(Channel ch) throws Exception {
             super.initPlainChannel(ch);
-            ChannelPipeline pipeline = ch.pipeline();
-            pipeline.addBefore("inflater", "copyEncodingHeader", new CopyEncodingHandler());
+            ch.pipeline().addBefore("inflater", "copyEncodingHeader", new CopyEncodingHandler());
         }
     }
 

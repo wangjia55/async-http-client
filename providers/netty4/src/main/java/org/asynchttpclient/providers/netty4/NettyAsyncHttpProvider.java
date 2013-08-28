@@ -92,7 +92,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
@@ -305,7 +304,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 initPlainChannel(ch);
             }
         });
-        // FIXME
+        // FIXME What was the meaning of this and what is it still a matter with Netty4
         // DefaultChannelFuture.setUseDeadLockChecker(false);
 
         if (asyncHttpProviderConfig != null) {
@@ -319,10 +318,10 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         webSocketBootstrap.handler(new ChannelInitializer<Channel>() {
             @Override
             protected void initChannel(Channel ch) throws Exception {
-                ChannelPipeline pipeline = ch.pipeline();
-                pipeline.addLast("http-decoder", new HttpResponseDecoder());
-                pipeline.addLast("http-encoder", new HttpRequestEncoder());
-                pipeline.addLast("httpProcessor", NettyAsyncHttpProvider.this);
+                ch.pipeline()/**/
+                .addLast("http-decoder", new HttpResponseDecoder())/**/
+                .addLast("http-encoder", new HttpRequestEncoder())/**/
+                .addLast("httpProcessor", NettyAsyncHttpProvider.this);
             }
         });
     }
@@ -337,9 +336,8 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
     }
     
     protected void initPlainChannel(Channel ch) throws Exception {
-        ChannelPipeline pipeline = ch.pipeline();
-
-        pipeline.addLast(HTTP_HANDLER, newHttpClientCodec());
+        ChannelPipeline pipeline = ch.pipeline()/**/
+        .addLast(HTTP_HANDLER, newHttpClientCodec());
 
         if (config.getRequestCompressionLevel() > 0) {
             pipeline.addLast("deflater", new HttpContentCompressor(config.getRequestCompressionLevel()));
@@ -348,8 +346,8 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         if (config.isCompressionEnabled()) {
             pipeline.addLast("inflater", new HttpContentDecompressor());
         }
-        pipeline.addLast("chunkedWriter", new ChunkedWriteHandler());
-        pipeline.addLast("httpProcessor", NettyAsyncHttpProvider.this);
+        pipeline.addLast("chunkedWriter", new ChunkedWriteHandler())/**/
+        .addLast("httpProcessor", NettyAsyncHttpProvider.this);
     }
 
     <T> void constructSSLPipeline(final NettyConnectListener<T> cl) {
@@ -371,8 +369,8 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 if (config.isCompressionEnabled()) {
                     pipeline.addLast("inflater", new HttpContentDecompressor());
                 }
-                pipeline.addLast("chunkedWriter", new ChunkedWriteHandler());
-                pipeline.addLast("httpProcessor", NettyAsyncHttpProvider.this);
+                pipeline.addLast("chunkedWriter", new ChunkedWriteHandler())/**/
+                .addLast("httpProcessor", NettyAsyncHttpProvider.this);
             }
         });
 
@@ -388,9 +386,9 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     abort(cl.future(), ex);
                 }
 
-                pipeline.addLast("http-decoder", new HttpResponseDecoder());
-                pipeline.addLast("http-encoder", new HttpRequestEncoder());
-                pipeline.addLast("httpProcessor", NettyAsyncHttpProvider.this);
+                pipeline.addLast("http-decoder", new HttpResponseDecoder())/**/
+                .addLast("http-encoder", new HttpRequestEncoder())/**/
+                .addLast("httpProcessor", NettyAsyncHttpProvider.this);
             }
         });
     }
@@ -1106,7 +1104,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
     }
 
     private void finishChannel(final ChannelHandlerContext ctx) {
-        ctx.attr(DEFAULT_ATTRIBUTE).set(new DiscardEvent());
+        ctx.attr(DEFAULT_ATTRIBUTE).set(DiscardEvent.INSTANCE);
 
         // The channel may have already been removed if a timeout occurred, and this method may be called just after.
         if (ctx.channel() == null) {
@@ -1129,50 +1127,32 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
     @Override
     public void channelRead(final ChannelHandlerContext ctx, Object e) throws Exception {
 
-        // FIXME call to super.channelRead decrease the retain count, have to increase it in order to  use it in Protocol.handle
-//        if (e instanceof HttpContent) {
-//            HttpContent.class.cast(e).content().retain();
-//        }
-//
-//        // call super to reset the read timeout
-//        // FIXME really?
-//        super.channelRead(ctx, e);
-
         IN_IO_THREAD.set(Boolean.TRUE);
-        
-        Object attachment = ctx.attr(DEFAULT_ATTRIBUTE).get();
-        if (attachment == null) {
-            log.debug("ChannelHandlerContext wasn't having any attachment");
-        }
 
-        if (attachment instanceof DiscardEvent) {
-            return;
-        } else if (attachment instanceof AsyncCallable) {
-            if (e instanceof HttpContent) {
-                HttpContent chunk = (HttpContent) e;
-                if (chunk instanceof LastHttpContent) {
-                    AsyncCallable ac = (AsyncCallable) attachment;
-                    ac.call();
-                } else {
-                    return;
-                }
-            } else {
-                AsyncCallable ac = (AsyncCallable) attachment;
+        Object attachment = ctx.attr(DEFAULT_ATTRIBUTE).get();
+
+        if (attachment instanceof AsyncCallable) {
+            AsyncCallable ac = (AsyncCallable) attachment;
+            if (e instanceof LastHttpContent || !(e instanceof HttpContent)) {
                 ac.call();
+                ctx.attr(DEFAULT_ATTRIBUTE).set(DiscardEvent.INSTANCE);
             }
-            ctx.attr(DEFAULT_ATTRIBUTE).set(new DiscardEvent());
-            return;
-        } else if (!(attachment instanceof NettyResponseFuture<?>)) {
+
+        } else if (attachment instanceof NettyResponseFuture) {
+            Protocol p = (ctx.pipeline().get(HttpClientCodec.class) != null ? httpProtocol : webSocketProtocol);
+            NettyResponseFuture<?> future = (NettyResponseFuture<?>) ctx.attr(DEFAULT_ATTRIBUTE).get();
+            
+            if (!(future.isIgnoreNextContents() && e instanceof HttpContent)) {
+                p.handle(ctx, future, e);
+            }
+
+        } else if (attachment != DiscardEvent.INSTANCE) {
             try {
+                log.trace("Closing an orphan channel {}", ctx.channel());
                 ctx.channel().close();
             } catch (Throwable t) {
-                log.trace("Closing an orphan channel {}", ctx.channel());
             }
-            return;
         }
-
-        Protocol p = (ctx.pipeline().get(HttpClientCodec.class) != null ? httpProtocol : webSocketProtocol);
-        p.handle(ctx, e);
     }
 
     private Realm kerberosChallenge(List<String> proxyAuth, Request request, ProxyServer proxyServer, FluentCaseInsensitiveStringsMap headers, Realm realm, NettyResponseFuture<?> future) throws NTLMEngineException {
@@ -1274,13 +1254,10 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
     private void drainChannel(final ChannelHandlerContext ctx, final NettyResponseFuture<?> future) {
         ctx.attr(DEFAULT_ATTRIBUTE).set(new AsyncCallable(future) {
-            public Object call() throws Exception {
-                if (future.isKeepAlive() && ctx.channel().isActive() && connectionsPool.offer(getPoolKey(future), ctx.channel())) {
-                    return null;
+            public void call() throws Exception {
+                if (!(future.isKeepAlive() && ctx.channel().isActive() && connectionsPool.offer(getPoolKey(future), ctx.channel()))) {
+                    finishChannel(ctx);
                 }
-
-                finishChannel(ctx);
-                return null;
             }
 
             @Override
@@ -1471,10 +1448,6 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         markAsDone(future, ctx);
     }
 
-    private final boolean updateStatusAndInterrupt(AsyncHandler<?> handler, HttpResponseStatus c) throws Exception {
-        return handler.onStatusReceived(c) != STATE.CONTINUE;
-    }
-
     private final boolean updateBodyAndInterrupt(final NettyResponseFuture<?> future, AsyncHandler<?> handler, HttpResponseBodyPart c) throws Exception {
         boolean state = handler.onBodyPartReceived(c) != STATE.CONTINUE;
         if (c.closeUnderlyingConnection()) {
@@ -1484,8 +1457,8 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
     }
 
     // Simple marker for stopping publishing bytes.
-
-    final static class DiscardEvent {
+    static enum DiscardEvent {
+        INSTANCE;
     }
 
     @Override
@@ -1558,7 +1531,9 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         p.onError(ctx, e);
 
         closeChannel(ctx);
-        ctx.fireChannelRead(e);
+        // FIXME not really sure
+        // ctx.fireChannelRead(e);
+        ctx.close();
     }
 
     protected static boolean abortOnConnectCloseException(Throwable cause) {
@@ -1813,7 +1788,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         }
     }
 
-    private abstract class AsyncCallable implements Callable<Object> {
+    private abstract class AsyncCallable {
 
         private final NettyResponseFuture<?> future;
 
@@ -1821,7 +1796,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             this.future = future;
         }
 
-        abstract public Object call() throws Exception;
+        abstract public void call() throws Exception;
 
         public NettyResponseFuture<?> future() {
             return future;
@@ -2011,12 +1986,10 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     }
 
                     AsyncCallable ac = new AsyncCallable(future) {
-                        public Object call() throws Exception {
-                            if (initialConnectionKeepAlive && ctx.channel().isActive() && connectionsPool.offer(initialPoolKey, ctx.channel())) {
-                                return null;
+                        public void call() throws Exception {
+                            if (!(initialConnectionKeepAlive && ctx.channel().isActive() && connectionsPool.offer(initialPoolKey, ctx.channel()))) {
+                                finishChannel(ctx);
                             }
-                            finishChannel(ctx);
-                            return null;
                         }
                     };
 
@@ -2042,8 +2015,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
     private final class HttpProtocol implements Protocol {
 
         @Override
-        public void handle(final ChannelHandlerContext ctx, final Object e) throws Exception {
-            final NettyResponseFuture<?> future = (NettyResponseFuture<?>) ctx.attr(DEFAULT_ATTRIBUTE).get();
+        public void handle(final ChannelHandlerContext ctx, final NettyResponseFuture future, final Object e) throws Exception {
             future.touch();
 
             // The connect timeout occurred.
@@ -2127,10 +2099,9 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
     
                             log.debug("Sending authentication to {}", request.getUrl());
                             AsyncCallable ac = new AsyncCallable(future) {
-                                public Object call() throws Exception {
+                                public void call() throws Exception {
                                     drainChannel(ctx, future);
                                     execute(builder.setHeaders(headers).setRealm(nr).build(), future);
-                                    return null;
                                 }
                             };
     
@@ -2211,40 +2182,34 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         return;
                     }
 
-                    if (!future.getAndSetStatusReceived(true) && updateStatusAndInterrupt(handler, status) || handler.onHeadersReceived(responseHeaders) != STATE.CONTINUE) {
+                    if (!future.getAndSetStatusReceived(true) && handler.onStatusReceived(status) != STATE.CONTINUE || handler.onHeadersReceived(responseHeaders) != STATE.CONTINUE) {
                         finishUpdate(future, ctx, HttpHeaders.isTransferEncodingChunked(response));
                         return;
                     }
                 }
 
-                if (e instanceof HttpContent && !future.isIgnoreNextContents()) {
+                if (handler != null && e instanceof HttpContent) {
                     HttpContent chunk = (HttpContent) e;
 
-                    try {
-                        if (handler != null) {
-                            boolean interrupt = false;
-                            boolean last = chunk instanceof LastHttpContent;
+                    boolean interrupt = false;
+                    boolean last = chunk instanceof LastHttpContent;
 
-                            // FIXME
-                            // Netty 3 provider is broken: in case of trailing headers, onHeadersReceived should be called before updateBodyAndInterrupt
-                            if (last) {
-                                LastHttpContent lastChunk = (LastHttpContent) chunk;
-                                HttpHeaders trailingHeaders = lastChunk.trailingHeaders();
-                                if (!trailingHeaders.isEmpty()) {
-                                    interrupt = handler.onHeadersReceived(new ResponseHeaders(future.getURI(), future.getHttpResponse().headers(), NettyAsyncHttpProvider.this, trailingHeaders)) != STATE.CONTINUE;
-                                }
-                            }
-
-                            if (!interrupt && chunk.content().readableBytes() > 0) {
-                                interrupt = updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), NettyAsyncHttpProvider.this, chunk));
-                            }
-
-                            if (interrupt || last) {
-                                finishUpdate(future, ctx, !last);
-                            }
+                    // FIXME
+                    // Netty 3 provider is broken: in case of trailing headers, onHeadersReceived should be called before updateBodyAndInterrupt
+                    if (last) {
+                        LastHttpContent lastChunk = (LastHttpContent) chunk;
+                        HttpHeaders trailingHeaders = lastChunk.trailingHeaders();
+                        if (!trailingHeaders.isEmpty()) {
+                            interrupt = handler.onHeadersReceived(new ResponseHeaders(future.getURI(), future.getHttpResponse().headers(), NettyAsyncHttpProvider.this, trailingHeaders)) != STATE.CONTINUE;
                         }
-                    } finally {
-                        chunk.release();
+                    }
+
+                    if (!interrupt && chunk.content().readableBytes() > 0) {
+                        interrupt = updateBodyAndInterrupt(future, handler, new ResponseBodyPart(future.getURI(), NettyAsyncHttpProvider.this, chunk));
+                    }
+
+                    if (interrupt || last) {
+                        finishUpdate(future, ctx, !last);
                     }
                 }
             } catch (Exception t) {
@@ -2294,9 +2259,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         }
 
         @Override
-        public void handle(ChannelHandlerContext ctx, Object e) throws Exception {
-            Object attachment = ctx.attr(DEFAULT_ATTRIBUTE).get();
-            NettyResponseFuture future = NettyResponseFuture.class.cast(attachment);
+        public void handle(ChannelHandlerContext ctx, NettyResponseFuture future, Object e) throws Exception {
             WebSocketUpgradeHandler h = WebSocketUpgradeHandler.class.cast(future.getAsyncHandler());
             Request request = future.getRequest();
 
@@ -2393,7 +2356,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
                         if (frame instanceof CloseWebSocketFrame) {
                             try {
-                                ctx.attr(DEFAULT_ATTRIBUTE).set(DiscardEvent.class);
+                                ctx.attr(DEFAULT_ATTRIBUTE).set(DiscardEvent.INSTANCE);
                                 webSocket.onClose(CloseWebSocketFrame.class.cast(frame).statusCode(), CloseWebSocketFrame.class.cast(frame).reasonText());
                             } catch (Throwable t) {
                                 // Swallow any exception that may comes from a Netty version released before 3.4.0
@@ -2405,7 +2368,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     }
                 }
             } else {
-                log.error("Invalid attachment {}", attachment);
+                log.error("Invalid message {}", e);
             }
         }
 
@@ -2445,7 +2408,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 NettyWebSocket webSocket = NettyWebSocket.class.cast(h.onCompleted());
 
                 // FIXME How could this test not succeed, attachment is a NettyResponseFuture????
-                if (!(attachment instanceof DiscardEvent))
+                if (attachment != DiscardEvent.INSTANCE)
                     webSocket.close(1006, "Connection was closed abnormally (that is, with no close frame being sent).");
             } catch (Throwable t) {
                 log.error("onError", t);
