@@ -64,22 +64,22 @@ final class NettyConnectListener<T> implements ChannelFutureListener {
     private void onFutureSuccess(final Channel channel) throws Exception {
         channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(future);
         SslHandler sslHandler = (SslHandler) channel.pipeline().get(NettyAsyncHttpProvider.SSL_HANDLER);
-        
-        if (sslHandler != null && !handshakeDone.getAndSet(true)) {
-            sslHandler.handshakeFuture().addListener(new GenericFutureListener<Future<Channel>>() {
-                public void operationComplete(Future<Channel> f) throws Exception {
-                    if (f.isSuccess()) {
-                        onFutureSuccess(channel);
-                    } else {
-                        onFutureFailure(channel, f.cause());
-                    }
-                }
-            });
-            return;
-        }
 
-        HostnameVerifier v = config.getHostnameVerifier();
         if (sslHandler != null) {
+            if (!handshakeDone.getAndSet(true)) {
+                sslHandler.handshakeFuture().addListener(new GenericFutureListener<Future<Channel>>() {
+                    public void operationComplete(Future<Channel> f) throws Exception {
+                        if (f.isSuccess()) {
+                            onFutureSuccess(channel);
+                        } else {
+                            onFutureFailure(channel, f.cause());
+                        }
+                    }
+                });
+                return;
+            }
+
+            HostnameVerifier v = config.getHostnameVerifier();
             if (!v.verify(future.getURI().getHost(), sslHandler.engine().getSession())) {
                 ConnectException exception = new ConnectException("HostnameVerifier exception.");
                 future.abort(exception);
