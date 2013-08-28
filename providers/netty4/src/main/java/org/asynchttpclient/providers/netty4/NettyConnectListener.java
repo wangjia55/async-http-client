@@ -131,17 +131,7 @@ final class NettyConnectListener<T> implements ChannelFutureListener {
         private final NettyAsyncHttpProvider provider;
         private final ByteBuf buffer;
 
-        public Builder(AsyncHttpClientConfig config, Request request, AsyncHandler<T> asyncHandler,
-                       NettyAsyncHttpProvider provider, ByteBuf buffer) {
-
-            this.config = config;
-            this.request = request;
-            this.asyncHandler = asyncHandler;
-            this.future = null;
-            this.provider = provider;
-            this.buffer = buffer;
-        }
-
+        // FIXME Netty3 useless constructor
         public Builder(AsyncHttpClientConfig config, Request request, AsyncHandler<T> asyncHandler,
                        NettyResponseFuture<T> future, NettyAsyncHttpProvider provider, ByteBuf buffer) {
 
