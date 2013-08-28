@@ -108,6 +108,7 @@ public class RequestBuilder extends RequestBuilderBase<RequestBuilder> {
      * @see org.asynchttpclient.generators.InputStreamBodyGenerator
      * @deprecated {@link #setBody(BodyGenerator)} setBody(new InputStreamBodyGenerator(inputStream))
      */
+    // FIXME I'd do the exact opposite: deprecate InputStreamBodyGenerator
     @Override
     @Deprecated
     public RequestBuilder setBody(InputStream stream) throws IllegalArgumentException {

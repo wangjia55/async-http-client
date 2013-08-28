@@ -151,16 +151,16 @@ import org.slf4j.LoggerFactory;
 
 @Sharable
 public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter implements AsyncHttpProvider {
-    private final static String HTTP_HANDLER = "httpHandler";
-    protected final static String SSL_HANDLER = "sslHandler";
-    private final static String HTTPS = "https";
-    private final static String HTTP = "http";
+    private static final String HTTP_HANDLER = "httpHandler";
+    protected static final String SSL_HANDLER = "sslHandler";
+    private static final String HTTPS = "https";
+    private static final String HTTP = "http";
     private static final String WEBSOCKET = "ws";
     private static final String WEBSOCKET_SSL = "wss";
 
-    private final static Logger log = LoggerFactory.getLogger(NettyAsyncHttpProvider.class);
-    private final static Charset UTF8 = Charset.forName("UTF-8");
-    public final static AttributeKey<Object> DEFAULT_ATTRIBUTE = new AttributeKey<Object>("default");
+    private static final Logger log = LoggerFactory.getLogger(NettyAsyncHttpProvider.class);
+    private static final Charset UTF8 = Charset.forName("UTF-8");
+    public static final AttributeKey<Object> DEFAULT_ATTRIBUTE = new AttributeKey<Object>("default");
 
     private final Bootstrap plainBootstrap;
     private final Bootstrap secureBootstrap;
@@ -503,7 +503,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                             fileLength = raf.length();
 
                             ChannelFuture writeFuture;
-                            if (channel.pipeline().get(SslHandler.class) != null) {
+                            if (channel.pipeline().get(SSL_HANDLER) != null) {
                                 writeFuture = channel.write(new ChunkedFile(raf, 0, fileLength, MAX_BUFFERED_BYTES), channel.newProgressivePromise());
                             } else {
                                 FileRegion region = new OptimizedFileRegion(raf, 0, fileLength);
@@ -531,17 +531,18 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         }
                     } else if (future.getRequest().getStreamData() != null || future.getRequest().getBodyGenerator() instanceof InputStreamBodyGenerator) {
                         final InputStream is = future.getRequest().getStreamData() != null? future.getRequest().getStreamData(): InputStreamBodyGenerator.class.cast(future.getRequest().getBodyGenerator()).getInputStream();
-                        
+
                         if (future.getAndSetStreamWasAlreadyConsumed()) {
                             if (is.markSupported())
                                 is.reset();
-                            else
+                            else {
                                 log.warn("Stream has already been consumed and cannot be reset");
+                                return;
+                            }
                         }
 
-                        ChannelFuture writeFuture = channel.write(new ChunkedStream(is), channel.newProgressivePromise());
-                        channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
-                        writeFuture.addListener(new ProgressListener(false, future.getAsyncHandler(), future) {
+                        channel.write(new ChunkedStream(is), channel.newProgressivePromise())
+                        .addListener(new ProgressListener(false, future.getAsyncHandler(), future) {
                             public void operationComplete(ChannelProgressiveFuture cf) {
                                 try {
                                     is.close();
@@ -555,13 +556,12 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         
                     } else if (body != null) {
 
-                        ChannelFuture writeFuture;
-                        if (channel.pipeline().get(SslHandler.class) == null && body instanceof RandomAccessBody) {
-                            BodyFileRegion bodyFileRegion = new BodyFileRegion((RandomAccessBody) body);
-                            writeFuture = channel.write(bodyFileRegion, channel.newProgressivePromise());
+                        Object msg;
+                        if (channel.pipeline().get(SSL_HANDLER) == null && body instanceof RandomAccessBody) {
+                            msg = new BodyFileRegion((RandomAccessBody) body);
                         } else {
                             BodyGenerator bg = future.getRequest().getBodyGenerator();
-                            BodyChunkedInput bodyChunkedInput = new BodyChunkedInput(body);
+                            msg = new BodyChunkedInput(body);
                             if (bg instanceof FeedableBodyGenerator) {
                                 FeedableBodyGenerator.class.cast(bg).setListener(new FeedListener() {
                                     @Override
@@ -570,8 +570,8 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                                     }
                                 });
                             }
-                            writeFuture = channel.write(bodyChunkedInput, channel.newProgressivePromise());
                         }
+                        ChannelFuture writeFuture = channel.write(msg, channel.newProgressivePromise());
 
                         final Body b = body;
                         writeFuture.addListener(new ProgressListener(false, future.getAsyncHandler(), future) {
@@ -2211,10 +2211,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         return;
                     }
 
-                    if (!future.getAndSetStatusReceived(true) && updateStatusAndInterrupt(handler, status)) {
-                        finishUpdate(future, ctx, HttpHeaders.isTransferEncodingChunked(response));
-                        return;
-                    } else if (handler.onHeadersReceived(responseHeaders) != STATE.CONTINUE) {
+                    if (!future.getAndSetStatusReceived(true) && updateStatusAndInterrupt(handler, status) || handler.onHeadersReceived(responseHeaders) != STATE.CONTINUE) {
                         finishUpdate(future, ctx, HttpHeaders.isTransferEncodingChunked(response));
                         return;
                     }
