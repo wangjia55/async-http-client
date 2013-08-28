@@ -24,7 +24,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.net.ssl.HostnameVerifier;
 
-import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
@@ -129,23 +128,21 @@ final class NettyConnectListener<T> implements ChannelFutureListener {
         private final AsyncHandler<T> asyncHandler;
         private NettyResponseFuture<T> future;
         private final NettyAsyncHttpProvider provider;
-        private final ByteBuf buffer;
 
         // FIXME Netty3 useless constructor
         public Builder(AsyncHttpClientConfig config, Request request, AsyncHandler<T> asyncHandler,
-                       NettyResponseFuture<T> future, NettyAsyncHttpProvider provider, ByteBuf buffer) {
+                       NettyResponseFuture<T> future, NettyAsyncHttpProvider provider) {
 
             this.config = config;
             this.request = request;
             this.asyncHandler = asyncHandler;
             this.future = future;
             this.provider = provider;
-            this.buffer = buffer;
         }
 
         public NettyConnectListener<T> build(final URI uri) throws IOException {
             ProxyServer proxyServer = ProxyUtils.getProxyServer(config, request);
-            HttpRequest nettyRequest = NettyAsyncHttpProvider.buildRequest(config, request, uri, true, buffer, proxyServer);
+            HttpRequest nettyRequest = NettyAsyncHttpProvider.buildRequest(config, request, uri, true, proxyServer);
             if (future == null) {
                 future = NettyAsyncHttpProvider.newFuture(uri, request, asyncHandler, nettyRequest, config, provider, proxyServer);
             } else {

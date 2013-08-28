@@ -475,10 +475,12 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             }
 
             // Leave it to true.
+            // FIXME Yeah... explain why instead of saying the same thing as the code
             if (future.getAndSetWriteHeaders(true)) {
                 try {
                     channel.writeAndFlush(nettyRequest, channel.newProgressivePromise()).addListener(new ProgressListener(true, future.getAsyncHandler(), future));
                 } catch (Throwable cause) {
+                    // FIXME why not notify?
                     log.debug(cause.getMessage(), cause);
                     try {
                         channel.close();
@@ -527,29 +529,48 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                             }
                             throw ex;
                         }
+                    } else if (future.getRequest().getStreamData() != null || future.getRequest().getBodyGenerator() instanceof InputStreamBodyGenerator) {
+                        final InputStream is = future.getRequest().getStreamData() != null? future.getRequest().getStreamData(): InputStreamBodyGenerator.class.cast(future.getRequest().getBodyGenerator()).getInputStream();
+                        
+                        if (future.getAndSetStreamWasAlreadyConsumed()) {
+                            if (is.markSupported())
+                                is.reset();
+                            else
+                                log.warn("Stream has already been consumed and cannot be reset");
+                        }
+
+                        ChannelFuture writeFuture = channel.write(new ChunkedStream(is), channel.newProgressivePromise());
+                        channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+                        writeFuture.addListener(new ProgressListener(false, future.getAsyncHandler(), future) {
+                            public void operationComplete(ChannelProgressiveFuture cf) {
+                                try {
+                                    is.close();
+                                } catch (IOException e) {
+                                    log.warn("Failed to close request body: {}", e.getMessage(), e);
+                                }
+                                super.operationComplete(cf);
+                            }
+                        });
+                        channel.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+                        
                     } else if (body != null) {
 
                         ChannelFuture writeFuture;
-                        if (channel.pipeline().get(SslHandler.class) == null && (body instanceof RandomAccessBody)) {
+                        if (channel.pipeline().get(SslHandler.class) == null && body instanceof RandomAccessBody) {
                             BodyFileRegion bodyFileRegion = new BodyFileRegion((RandomAccessBody) body);
                             writeFuture = channel.write(bodyFileRegion, channel.newProgressivePromise());
                         } else {
                             BodyGenerator bg = future.getRequest().getBodyGenerator();
-                            if (bg instanceof InputStreamBodyGenerator) {
-                                InputStream is = InputStreamBodyGenerator.class.cast(bg).getInputStream();
-                                writeFuture = channel.write(new ChunkedStream(is), channel.newProgressivePromise());
-                            } else {
-                                BodyChunkedInput bodyChunkedInput = new BodyChunkedInput(body);
-                                if (bg instanceof FeedableBodyGenerator) {
-                                    FeedableBodyGenerator.class.cast(bg).setListener(new FeedListener() {
-                                        @Override
-                                        public void onContentAdded() {
-                                            channel.pipeline().get(ChunkedWriteHandler.class).resumeTransfer();
-                                        }
-                                    });
-                                }
-                                writeFuture = channel.write(bodyChunkedInput, channel.newProgressivePromise());
+                            BodyChunkedInput bodyChunkedInput = new BodyChunkedInput(body);
+                            if (bg instanceof FeedableBodyGenerator) {
+                                FeedableBodyGenerator.class.cast(bg).setListener(new FeedListener() {
+                                    @Override
+                                    public void onContentAdded() {
+                                        channel.pipeline().get(ChunkedWriteHandler.class).resumeTransfer();
+                                    }
+                                });
                             }
+                            writeFuture = channel.write(bodyChunkedInput, channel.newProgressivePromise());
                         }
 
                         final Body b = body;
@@ -591,13 +612,13 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         }
     }
 
-    protected final static HttpRequest buildRequest(AsyncHttpClientConfig config, Request request, URI uri, boolean allowConnect, ByteBuf buffer, ProxyServer proxyServer) throws IOException {
+    protected final static HttpRequest buildRequest(AsyncHttpClientConfig config, Request request, URI uri, boolean allowConnect, ProxyServer proxyServer) throws IOException {
 
         String method = request.getMethod();
         if (allowConnect && proxyServer != null && isSecure(uri)) {
             method = HttpMethod.CONNECT.toString();
         }
-        return construct(config, request, new HttpMethod(method), uri, buffer, proxyServer);
+        return construct(config, request, new HttpMethod(method), uri, proxyServer);
     }
 
     private static SpnegoEngine getSpnegoEngine() {
@@ -606,7 +627,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         return spnegoEngine;
     }
 
-    private static HttpRequest construct(AsyncHttpClientConfig config, Request request, HttpMethod m, URI uri, ByteBuf buffer, ProxyServer proxyServer) throws IOException {
+    private static HttpRequest construct(AsyncHttpClientConfig config, Request request, HttpMethod m, URI uri, ProxyServer proxyServer) throws IOException {
 
         String host = null;
         HttpVersion httpVersion;
@@ -774,7 +795,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             headers.put(HttpHeaders.Names.USER_AGENT, AsyncHttpProviderUtils.constructUserAgent(NettyAsyncHttpProvider.class, config));
         }
 
-        boolean hasDeferedBody = false;
+        boolean hasDeferredContent = false;
         if (!m.equals(HttpMethod.CONNECT)) {
             if (isNonEmpty(request.getCookies())) {
                 headers.put(HttpHeaders.Names.COOKIE, CookieEncoder.encodeClientSide(request.getCookies(), config.isRfc6265CookieEncoding()));
@@ -784,24 +805,19 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
                 String bodyCharset = request.getBodyEncoding() == null ? DEFAULT_CHARSET : request.getBodyEncoding();
                 
-                // We already have processed the body.
-                if (buffer != null && buffer.writerIndex() != 0) {
-                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, buffer.writerIndex());
-                    content = buffer;
-                } else if (request.getByteData() != null) {
+                if (request.getByteData() != null) {
                     headers.put(HttpHeaders.Names.CONTENT_LENGTH, request.getByteData().length);
                     content = Unpooled.wrappedBuffer(request.getByteData());
+
                 } else if (request.getStringData() != null) {
                     byte[] bytes = request.getStringData().getBytes(bodyCharset);
                     headers.put(HttpHeaders.Names.CONTENT_LENGTH, bytes.length);
                     content = Unpooled.wrappedBuffer(bytes);
+
                 } else if (request.getStreamData() != null) {
-                    // FIXME so wrong!!! should be streaming instead of reading fully
-                    int[] lengthWrapper = new int[1];
-                    byte[] bytes = AsyncHttpProviderUtils.readFully(request.getStreamData(), lengthWrapper);
-                    int length = lengthWrapper[0];
-                    headers.put(HttpHeaders.Names.CONTENT_LENGTH, length);
-                    content = Unpooled.wrappedBuffer(bytes, 0, length);
+                    hasDeferredContent = true;
+                    headers.put(HttpHeaders.Names.TRANSFER_ENCODING, HttpHeaders.Values.CHUNKED);
+
                 } else if (isNonEmpty(request.getParams())) {
                     StringBuilder sb = new StringBuilder();
                     for (final Entry<String, List<String>> paramEntry : request.getParams()) {
@@ -828,7 +844,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     headers.put(HttpHeaders.Names.CONTENT_TYPE, mre.getContentType());
                     headers.put(HttpHeaders.Names.CONTENT_LENGTH, mre.getContentLength());
 
-                    hasDeferedBody = true;
+                    hasDeferredContent = true;
 
                 } else if (request.getEntityWriter() != null) {
                     int length = getPredefinedContentLength(request, headers);
@@ -847,16 +863,16 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                         throw new IOException(String.format("File %s is not a file or doesn't exist", file.getAbsolutePath()));
                     }
                     headers.put(HttpHeaders.Names.CONTENT_LENGTH, file.length());
-                    hasDeferedBody = true;
+                    hasDeferredContent = true;
 
                 } else if (request.getBodyGenerator() != null) {
-                    hasDeferedBody = true;
+                    hasDeferredContent = true;
                 }
             }
         }
 
         HttpRequest nettyRequest;
-        if (hasDeferedBody) {
+        if (hasDeferredContent) {
             nettyRequest = new DefaultHttpRequest(httpVersion, m, requestUri);
         } else if (content != null) {
             nettyRequest = new DefaultFullHttpRequest(httpVersion, m, requestUri, content);
@@ -938,22 +954,16 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             }
         }
 
-        ByteBuf bufferedBytes = null;
-        // FIXME this would make a redirected POST fail
-//        if (f != null && f.getRequest().getFile() == null && !f.getNettyRequest().getMethod().equals(HttpMethod.CONNECT) && f.getNettyRequest() instanceof FullHttpRequest) {
-//            bufferedBytes = FullHttpRequest.class.cast(f.getNettyRequest()).content();
-//        }
-
         boolean useSSl = isSecure(uri) && !useProxy;
         // Can we do anything if that's not the case???
         if (channel != null && channel.isOpen() && channel.isActive()) {
             HttpRequest nettyRequest = null;
 
             if (f == null) {
-            	nettyRequest = buildRequest(config, request, uri, false, null, proxyServer);
+            	nettyRequest = buildRequest(config, request, uri, false, proxyServer);
                 f = newFuture(uri, request, asyncHandler, nettyRequest, config, this, proxyServer);
             } else {
-                nettyRequest = buildRequest(config, request, uri, f.isConnectAllowed(), bufferedBytes, proxyServer);
+                nettyRequest = buildRequest(config, request, uri, f.isConnectAllowed(), proxyServer);
                 f.setNettyRequest(nettyRequest);
             }
             f.setState(NettyResponseFuture.STATE.POOLED);
@@ -1010,7 +1020,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             }
         }
 
-        NettyConnectListener<T> cl = new NettyConnectListener.Builder<T>(config, request, asyncHandler, f, this, bufferedBytes).build(uri);
+        NettyConnectListener<T> cl = new NettyConnectListener.Builder<T>(config, request, asyncHandler, f, this).build(uri);
         boolean avoidProxy = ProxyUtils.avoidProxy(proxyServer, uri.getHost());
 
         if (useSSl) {
@@ -1045,10 +1055,11 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             return cl.future();
         }
 
-        // FIXME
+        // FIXME when can we have a direct invokation???
 //        boolean directInvokation = !(IN_IO_THREAD.get() && DefaultChannelFuture.isUseDeadLockChecker());
         boolean directInvokation = !IN_IO_THREAD.get();
 
+        // FIXME what does it have to do with the presence of a file?
         if (directInvokation && !asyncConnect && request.getFile() == null) {
             int timeOut = config.getConnectionTimeoutInMs() > 0 ? config.getConnectionTimeoutInMs() : Integer.MAX_VALUE;
             if (!channelFuture.awaitUninterruptibly(timeOut, TimeUnit.MILLISECONDS)) {

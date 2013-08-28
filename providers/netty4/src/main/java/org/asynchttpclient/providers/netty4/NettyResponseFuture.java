@@ -87,6 +87,7 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
     private final ConnectionPoolKeyStrategy connectionPoolKeyStrategy;
     private final ProxyServer proxyServer;
     private final AtomicBoolean ignoreNextContents = new AtomicBoolean(false);
+    private final AtomicBoolean streamWasAlreadyConsumed = new AtomicBoolean(false);
 
     public NettyResponseFuture(URI uri,//
             Request request,//
@@ -405,6 +406,10 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
 
     public boolean isIgnoreNextContents() {
         return ignoreNextContents.get();
+    }
+    
+    public boolean getAndSetStreamWasAlreadyConsumed() {
+        return streamWasAlreadyConsumed.getAndSet(true);
     }
 
     /**
