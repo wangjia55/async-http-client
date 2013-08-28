@@ -796,6 +796,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     headers.put(HttpHeaders.Names.CONTENT_LENGTH, bytes.length);
                     content = Unpooled.wrappedBuffer(bytes);
                 } else if (request.getStreamData() != null) {
+                    // FIXME so wrong!!! should be streaming instead of reading fully
                     int[] lengthWrapper = new int[1];
                     byte[] bytes = AsyncHttpProviderUtils.readFully(request.getStreamData(), lengthWrapper);
                     int length = lengthWrapper[0];
@@ -944,11 +945,12 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 //        }
 
         boolean useSSl = isSecure(uri) && !useProxy;
+        // Can we do anything if that's not the case???
         if (channel != null && channel.isOpen() && channel.isActive()) {
             HttpRequest nettyRequest = null;
 
             if (f == null) {
-            	nettyRequest = buildRequest(config, request, uri, false, bufferedBytes, proxyServer);
+            	nettyRequest = buildRequest(config, request, uri, false, null, proxyServer);
                 f = newFuture(uri, request, asyncHandler, nettyRequest, config, this, proxyServer);
             } else {
                 nettyRequest = buildRequest(config, request, uri, f.isConnectAllowed(), bufferedBytes, proxyServer);
@@ -1077,6 +1079,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             channelFuture.addListener(cl);
         }
 
+        // FIXME Why non cached???
         log.debug("\nNon cached request \n{}\n\nusing Channel \n{}\n", cl.future().getNettyRequest(), channelFuture.channel());
 
         if (!cl.future().isCancelled() || !cl.future().isDone()) {
@@ -1693,7 +1696,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
              * We need to make sure we aren't in the middle of an authorization process before publishing events as we will re-publish again the same event after the authorization, causing unpredictable behavior.
              */
             Realm realm = future.getRequest().getRealm() != null ? future.getRequest().getRealm() : NettyAsyncHttpProvider.this.getConfig().getRealm();
-            boolean startPublishing = future.isInAuth() || realm == null || realm.getUsePreemptiveAuth() == true;
+            boolean startPublishing = future.isInAuth() || realm == null || realm.getUsePreemptiveAuth();
 
             if (startPublishing && asyncHandler instanceof ProgressAsyncHandler) {
                 if (notifyHeaders) {
@@ -2012,7 +2015,10 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     } else {
                         ac.call();
                     }
-                    execute(nBuilder.setUrl(newUrl).build(), future);
+                    
+                    Request target = nBuilder.setUrl(newUrl).build();
+                    future.setRequest(target);
+                    execute(target, future);
                     return true;
                 }
             } else {
