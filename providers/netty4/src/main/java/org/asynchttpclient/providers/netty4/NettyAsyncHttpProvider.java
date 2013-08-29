@@ -1367,7 +1367,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                 FilterContext<?> fc = new FilterContext.FilterContextBuilder().asyncHandler(future.getAsyncHandler()).request(future.getRequest()).ioException(new IOException("Channel Closed")).build();
                 fc = handleIoException(fc, future);
 
-                if (fc.replayRequest() && !future.cannotBeReplay()) {
+                if (fc.replayRequest() && future.canBeReplayed()) {
                     replayRequest(future, fc, ctx);
                     return;
                 }
@@ -1399,7 +1399,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
                     future = (NettyResponseFuture<?>) attachment;
             }
 
-            if (future != null && !future.cannotBeReplay()) {
+            if (future != null && future.canBeReplayed()) {
                 future.setState(NettyResponseFuture.STATE.RECONNECTED);
                 future.getAndSetStatusReceived(false);
 
