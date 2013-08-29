@@ -1388,37 +1388,37 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
     protected boolean retry(Channel channel, NettyResponseFuture<?> future) {
 
-        if (isClose.get()) {
-            return false;
+        boolean success = false;
+
+        if (!isClose.get()) {
+            connectionsPool.removeAll(channel);
+
+            if (future == null) {
+                Object attachment = channel.pipeline().context(NettyAsyncHttpProvider.class).attr(DEFAULT_ATTRIBUTE).get();
+                if (attachment instanceof NettyResponseFuture)
+                    future = (NettyResponseFuture<?>) attachment;
+            }
+
+            if (future != null && !future.cannotBeReplay()) {
+                future.setState(NettyResponseFuture.STATE.RECONNECTED);
+                future.getAndSetStatusReceived(false);
+
+                log.debug("Trying to recover request {}\n", future.getNettyRequest());
+
+                try {
+                    execute(future.getRequest(), future);
+                    success = true;
+
+                } catch (IOException iox) {
+                    future.setState(NettyResponseFuture.STATE.CLOSED);
+                    future.abort(iox);
+                    log.error("Remotely Closed, unable to recover", iox);
+                }
+            } else {
+                log.debug("Unable to recover future {}\n", future);
+            }
         }
-
-        connectionsPool.removeAll(channel);
-
-        if (future == null) {
-            Object attachment = channel.pipeline().context(NettyAsyncHttpProvider.class).attr(DEFAULT_ATTRIBUTE).get();
-            if (attachment instanceof NettyResponseFuture)
-                future = (NettyResponseFuture<?>) attachment;
-        }
-
-        if (future == null || future.cannotBeReplay()) {
-            log.debug("Unable to recover future {}\n", future);
-            return false;
-        }
-
-        future.setState(NettyResponseFuture.STATE.RECONNECTED);
-        future.getAndSetStatusReceived(false);
-
-        log.debug("Trying to recover request {}\n", future.getNettyRequest());
-
-        try {
-            execute(future.getRequest(), future);
-            return true;
-        } catch (IOException iox) {
-            future.setState(NettyResponseFuture.STATE.CLOSED);
-            future.abort(iox);
-            log.error("Remotely Closed, unable to recover", iox);
-        }
-        return false;
+        return success;
     }
 
     private void markAsDone(final NettyResponseFuture<?> future, final ChannelHandlerContext ctx) throws MalformedURLException {
