@@ -1377,7 +1377,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
             p.onClose(ctx);
 
             if (future != null && !future.isDone() && !future.isCancelled()) {
-                if (remotelyClosed(ctx.channel(), future)) {
+                if (!retry(ctx.channel(), future)) {
                     abort(future, new IOException("Remotely Closed"));
                 }
             } else {
@@ -1386,10 +1386,10 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
         }
     }
 
-    protected boolean remotelyClosed(Channel channel, NettyResponseFuture<?> future) {
+    protected boolean retry(Channel channel, NettyResponseFuture<?> future) {
 
         if (isClose.get()) {
-            return true;
+            return false;
         }
 
         connectionsPool.removeAll(channel);
@@ -1402,7 +1402,7 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
         if (future == null || future.cannotBeReplay()) {
             log.debug("Unable to recover future {}\n", future);
-            return true;
+            return false;
         }
 
         future.setState(NettyResponseFuture.STATE.RECONNECTED);
@@ -1412,13 +1412,13 @@ public class NettyAsyncHttpProvider extends ChannelInboundHandlerAdapter impleme
 
         try {
             execute(future.getRequest(), future);
-            return false;
+            return true;
         } catch (IOException iox) {
             future.setState(NettyResponseFuture.STATE.CLOSED);
             future.abort(iox);
             log.error("Remotely Closed, unable to recover", iox);
         }
-        return true;
+        return false;
     }
 
     private void markAsDone(final NettyResponseFuture<?> future, final ChannelHandlerContext ctx) throws MalformedURLException {

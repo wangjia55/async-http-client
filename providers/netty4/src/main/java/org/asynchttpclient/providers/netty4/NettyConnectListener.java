@@ -98,7 +98,8 @@ final class NettyConnectListener<T> implements ChannelFutureListener {
                 || future.getState() != NettyResponseFuture.STATE.NEW)) {
 
             logger.debug("Retrying {} ", future.getNettyRequest());
-            if (future.provider().remotelyClosed(channel, future)) {
+            // FIXME Netty 3 use the wrong statement
+            if (future.provider().retry(channel, future)) {
                 return;
             }
         }
