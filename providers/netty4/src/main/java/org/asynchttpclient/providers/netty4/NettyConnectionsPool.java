@@ -13,13 +13,7 @@
 package org.asynchttpclient.providers.netty4;
 
 import static org.asynchttpclient.util.DateUtil.millisTime;
-
-import org.asynchttpclient.ConnectionsPool;
-
 import io.netty.channel.Channel;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -29,6 +23,11 @@ import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.asynchttpclient.AsyncHttpClientConfig;
+import org.asynchttpclient.ConnectionsPool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A simple implementation of {@link org.asynchttpclient.ConnectionsPool} based on a {@link java.util.concurrent.ConcurrentHashMap}
@@ -47,8 +46,8 @@ public class NettyConnectionsPool implements ConnectionsPool<String, Channel> {
     private final int maxConnectionLifeTimeInMs;
     private final long maxIdleTime;
 
-    public NettyConnectionsPool(NettyAsyncHttpProvider provider) {
-        this(provider.getConfig().getMaxTotalConnections(), provider.getConfig().getMaxConnectionPerHost(), provider.getConfig().getIdleConnectionInPoolTimeoutInMs(), provider.getConfig().isSslConnectionPoolEnabled(), provider.getConfig().getMaxConnectionLifeTimeInMs(), new Timer(true));
+    public NettyConnectionsPool(AsyncHttpClientConfig config) {
+        this(config.getMaxTotalConnections(), config.getMaxConnectionPerHost(), config.getIdleConnectionInPoolTimeoutInMs(), config.isSslConnectionPoolEnabled(), config.getMaxConnectionLifeTimeInMs(), new Timer(true));
     }
 
     public NettyConnectionsPool(int maxTotalConnections, int maxConnectionPerHost, long maxIdleTime, boolean sslConnectionPoolEnabled, int maxConnectionLifeTimeInMs, Timer idleConnectionDetector) {
@@ -120,7 +119,7 @@ public class NettyConnectionsPool implements ConnectionsPool<String, Channel> {
                 long endConcurrentLoop = millisTime();
 
                 for (IdleChannel idleChannel : channelsInTimeout) {
-                    Object attachment = idleChannel.channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).get();
+                    Object attachment = Channels.getDefaultAttribute(idleChannel.channel);
                     if (attachment != null) {
                         if (attachment instanceof NettyResponseFuture) {
                             NettyResponseFuture<?> future = (NettyResponseFuture<?>) attachment;
@@ -172,7 +171,7 @@ public class NettyConnectionsPool implements ConnectionsPool<String, Channel> {
         }
 
         log.debug("Adding uri: {} for channel {}", uri, channel);
-        channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(NettyAsyncHttpProvider.DiscardEvent.INSTANCE);
+        Channels.setDefaultAttribute(channel, DiscardEvent.INSTANCE);
 
         ConcurrentLinkedQueue<IdleChannel> idleConnectionForHost = connectionsPool.get(uri);
         if (idleConnectionForHost == null) {
@@ -283,7 +282,7 @@ public class NettyConnectionsPool implements ConnectionsPool<String, Channel> {
 
     private void close(Channel channel) {
         try {
-            channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(NettyAsyncHttpProvider.DiscardEvent.INSTANCE);
+            Channels.setDefaultAttribute(channel, DiscardEvent.INSTANCE);
             channel2CreationDate.remove(channel);
             channel.close();
         } catch (Throwable t) {

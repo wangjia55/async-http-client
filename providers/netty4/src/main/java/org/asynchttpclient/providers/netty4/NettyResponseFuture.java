@@ -16,18 +16,10 @@
 package org.asynchttpclient.providers.netty4;
 
 import static org.asynchttpclient.util.DateUtil.millisTime;
-import org.asynchttpclient.AsyncHandler;
-import org.asynchttpclient.ConnectionPoolKeyStrategy;
-import org.asynchttpclient.ProxyServer;
-import org.asynchttpclient.Request;
-import org.asynchttpclient.listenable.AbstractListenableFuture;
 import io.netty.channel.Channel;
 import io.netty.handler.codec.http.HttpRequest;
 import io.netty.handler.codec.http.HttpResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.net.MalformedURLException;
 import java.net.URI;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
@@ -40,6 +32,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.asynchttpclient.AsyncHandler;
+import org.asynchttpclient.AsyncHttpClientConfig;
+import org.asynchttpclient.ConnectionPoolKeyStrategy;
+import org.asynchttpclient.ProxyServer;
+import org.asynchttpclient.Request;
+import org.asynchttpclient.listenable.AbstractListenableFuture;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * A {@link Future} that can be used to track when an asynchronous HTTP request has been fully processed.
  * 
@@ -50,16 +51,16 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
     private final static Logger logger = LoggerFactory.getLogger(NettyResponseFuture.class);
     public final static String MAX_RETRY = "org.asynchttpclient.providers.netty.maxRetry";
 
-    enum STATE {
+    public enum STATE {
         NEW, POOLED, RECONNECTED, CLOSED,
     }
-
+    
     private final CountDownLatch latch = new CountDownLatch(1);
     private final AtomicBoolean isDone = new AtomicBoolean(false);
     private final AtomicBoolean isCancelled = new AtomicBoolean(false);
     private AsyncHandler<V> asyncHandler;
     private final int requestTimeoutInMs;
-    private final int idleConnectionTimeoutInMs;
+    private final AsyncHttpClientConfig config;
     private Request request;
     private HttpRequest nettyRequest;
     private final AtomicReference<V> content = new AtomicReference<V>();
@@ -68,12 +69,11 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
     private HttpResponse httpResponse;
     private final AtomicReference<ExecutionException> exEx = new AtomicReference<ExecutionException>();
     private final AtomicInteger redirectCount = new AtomicInteger();
-    private volatile Future<?> reaperFuture;
+    private volatile ReaperFuture reaperFuture;
     private final AtomicBoolean inAuth = new AtomicBoolean(false);
     private final AtomicBoolean statusReceived = new AtomicBoolean(false);
     private final AtomicLong touch = new AtomicLong(millisTime());
     private final long start = millisTime();
-    private final NettyAsyncHttpProvider asyncHttpProvider;
     private final AtomicReference<STATE> state = new AtomicReference<STATE>(STATE.NEW);
     private final AtomicBoolean contentProcessed = new AtomicBoolean(false);
     private Channel channel;
@@ -94,35 +94,33 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
             AsyncHandler<V> asyncHandler,//
             HttpRequest nettyRequest,//
             int requestTimeoutInMs,//
-            int idleConnectionTimeoutInMs,//
-            NettyAsyncHttpProvider asyncHttpProvider,//
+            AsyncHttpClientConfig config,//
             ConnectionPoolKeyStrategy connectionPoolKeyStrategy,//
             ProxyServer proxyServer) {
 
         this.asyncHandler = asyncHandler;
         this.requestTimeoutInMs = requestTimeoutInMs;
-        this.idleConnectionTimeoutInMs = idleConnectionTimeoutInMs;
         this.request = request;
         this.nettyRequest = nettyRequest;
         this.uri = uri;
-        this.asyncHttpProvider = asyncHttpProvider;
+        this.config = config;
         this.connectionPoolKeyStrategy = connectionPoolKeyStrategy;
         this.proxyServer = proxyServer;
 
         if (System.getProperty(MAX_RETRY) != null) {
             maxRetry = Integer.valueOf(System.getProperty(MAX_RETRY));
         } else {
-            maxRetry = asyncHttpProvider.getConfig().getMaxRequestRetry();
+            maxRetry = config.getMaxRequestRetry();
         }
         writeHeaders = true;
         writeBody = true;
     }
 
-    protected URI getURI() throws MalformedURLException {
+    public URI getURI() {
         return uri;
     }
 
-    protected void setURI(URI uri) {
+    public void setURI(URI uri) {
         this.uri = uri;
     }
 
@@ -134,30 +132,21 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
         return proxyServer;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    /* @Override */
+    @Override
     public boolean isDone() {
         return isDone.get();
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    /* @Override */
+    @Override
     public boolean isCancelled() {
         return isCancelled.get();
     }
 
-    void setAsyncHandler(AsyncHandler<V> asyncHandler) {
+    public void setAsyncHandler(AsyncHandler<V> asyncHandler) {
         this.asyncHandler = asyncHandler;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    /* @Override */
+    @Override
     public boolean cancel(boolean force) {
         cancelReaper();
 
@@ -165,7 +154,7 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
             return false;
 
         try {
-            channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(NettyAsyncHttpProvider.DiscardEvent.INSTANCE);
+            Channels.setDefaultAttribute(channel, DiscardEvent.INSTANCE);
             channel.close();
         } catch (Throwable t) {
             // Ignore
@@ -194,17 +183,14 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
     }
 
     public boolean hasConnectionIdleTimedOut(long now) {
-        return idleConnectionTimeoutInMs != -1 && (now - touch.get()) >= idleConnectionTimeoutInMs;
+        return config.getIdleConnectionTimeoutInMs() != -1 && (now - touch.get()) >= config.getIdleConnectionTimeoutInMs();
     }
 
     public boolean hasRequestTimedOut(long now) {
         return requestTimeoutInMs != -1 && (now - start) >= requestTimeoutInMs;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    /* @Override */
+    @Override
     public V get() throws InterruptedException, ExecutionException {
         try {
             return get(requestTimeoutInMs, TimeUnit.MILLISECONDS);
@@ -214,16 +200,13 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
         }
     }
 
-    void cancelReaper() {
+    public void cancelReaper() {
         if (reaperFuture != null) {
             reaperFuture.cancel(false);
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    /* @Override */
+    @Override
     public V get(long l, TimeUnit tu) throws InterruptedException, TimeoutException, ExecutionException {
         if (!isDone() && !isCancelled()) {
             boolean expired = false;
@@ -236,7 +219,7 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
             if (expired) {
                 isCancelled.set(true);
                 try {
-                    channel.pipeline().context(NettyAsyncHttpProvider.class).attr(NettyAsyncHttpProvider.DEFAULT_ATTRIBUTE).set(NettyAsyncHttpProvider.DiscardEvent.INSTANCE);
+                    Channels.setDefaultAttribute(channel, DiscardEvent.INSTANCE);
                     channel.close();
                 } catch (Throwable t) {
                     // Ignore
@@ -263,7 +246,7 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
         return getContent();
     }
 
-    V getContent() throws ExecutionException {
+    public V getContent() throws ExecutionException {
         ExecutionException e = exEx.getAndSet(null);
         if (e != null) {
             throw e;
@@ -339,7 +322,7 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
         content.set(v);
     }
 
-    protected final Request getRequest() {
+    public final Request getRequest() {
         return request;
     }
 
@@ -347,52 +330,52 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
         return nettyRequest;
     }
 
-    protected final void setNettyRequest(HttpRequest nettyRequest) {
+    public final void setNettyRequest(HttpRequest nettyRequest) {
         this.nettyRequest = nettyRequest;
     }
 
-    protected final AsyncHandler<V> getAsyncHandler() {
+    public final AsyncHandler<V> getAsyncHandler() {
         return asyncHandler;
     }
 
-    protected final boolean isKeepAlive() {
+    public final boolean isKeepAlive() {
         return keepAlive;
     }
 
-    protected final void setKeepAlive(final boolean keepAlive) {
+    public final void setKeepAlive(final boolean keepAlive) {
         this.keepAlive = keepAlive;
     }
 
-    protected final HttpResponse getHttpResponse() {
+    public final HttpResponse getHttpResponse() {
         return httpResponse;
     }
 
-    protected final void setHttpResponse(final HttpResponse httpResponse) {
+    public final void setHttpResponse(final HttpResponse httpResponse) {
         this.httpResponse = httpResponse;
     }
 
-    protected int incrementAndGetCurrentRedirectCount() {
+    public int incrementAndGetCurrentRedirectCount() {
         return redirectCount.incrementAndGet();
     }
 
-    protected void setReaperFuture(Future<?> reaperFuture) {
+    public void setReaperFuture(ReaperFuture reaperFuture) {
         cancelReaper();
         this.reaperFuture = reaperFuture;
     }
 
-    protected boolean isInAuth() {
+    public boolean isInAuth() {
         return inAuth.get();
     }
 
-    protected boolean getAndSetAuth(boolean inDigestAuth) {
+    public boolean getAndSetAuth(boolean inDigestAuth) {
         return inAuth.getAndSet(inDigestAuth);
     }
 
-    protected STATE getState() {
+    public STATE getState() {
         return state.get();
     }
 
-    protected void setState(STATE state) {
+    public void setState(STATE state) {
         this.state.set(state);
     }
 
@@ -412,39 +395,26 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
         return streamWasAlreadyConsumed.getAndSet(true);
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    /* @Override */
+    @Override
     public void touch() {
         touch.set(millisTime());
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    /* @Override */
+    @Override
     public boolean getAndSetWriteHeaders(boolean writeHeaders) {
         boolean b = this.writeHeaders;
         this.writeHeaders = writeHeaders;
         return b;
     }
 
-    /**
-     * {@inheritDoc}
-     */
-    /* @Override */
+    @Override
     public boolean getAndSetWriteBody(boolean writeBody) {
         boolean b = this.writeBody;
         this.writeBody = writeBody;
         return b;
     }
 
-    protected NettyAsyncHttpProvider provider() {
-        return asyncHttpProvider;
-    }
-
-    protected void attachChannel(Channel channel) {
+    public void attachChannel(Channel channel) {
         this.channel = channel;
     }
 
@@ -460,20 +430,20 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
         this.allowConnect = allowConnect;
     }
 
-    protected void attachChannel(Channel channel, boolean reuseChannel) {
+    public void attachChannel(Channel channel, boolean reuseChannel) {
         this.channel = channel;
         this.reuseChannel = reuseChannel;
     }
 
-    protected Channel channel() {
+    public Channel channel() {
         return channel;
     }
 
-    protected boolean reuseChannel() {
+    public boolean reuseChannel() {
         return reuseChannel;
     }
 
-    protected boolean canRetry() {
+    public boolean canRetry() {
         if (currentRetry.incrementAndGet() > maxRetry) {
             return false;
         }
@@ -501,10 +471,6 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
         return requestTimeoutInMs;
     }
 
-    public long getIdleConnectionTimeoutInMs() {
-        return idleConnectionTimeoutInMs;
-    }
-
     @Override
     public String toString() {
         return "NettyResponseFuture{" + //
@@ -526,5 +492,4 @@ public final class NettyResponseFuture<V> extends AbstractListenableFuture<V> {
                 ",\n\ttouch=" + touch + //
                 '}';
     }
-
 }

@@ -24,6 +24,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.asynchttpclient.AsyncHttpProviderConfig;
 
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
@@ -49,6 +51,11 @@ public class NettyAsyncHttpProviderConfig implements AsyncHttpProviderConfig<Str
      * Allow configuring the Netty's used socket channel.
      */
     private Class<? extends SocketChannel> socketChannel;
+    
+    private ChannelInitializer<Channel> httpChannelInitializer;
+    private ChannelInitializer<Channel> webSocketChannelInitializer;
+    private ChannelInitializer<Channel> httpsChannelInitializer;
+    private ChannelInitializer<Channel> websocketSecureChannelInitializer;
 
     /**
      * Execute the connect operation asynchronously.
@@ -194,5 +201,37 @@ public class NettyAsyncHttpProviderConfig implements AsyncHttpProviderConfig<Str
 
     public void setMaxChunkSize(int maxChunkSize) {
         this.maxChunkSize = maxChunkSize;
+    }
+
+    public ChannelInitializer<Channel> getHttpChannelInitializer() {
+        return httpChannelInitializer;
+    }
+
+    public void setHttpChannelInitializer(ChannelInitializer<Channel> httpChannelInitializer) {
+        this.httpChannelInitializer = httpChannelInitializer;
+    }
+
+    public ChannelInitializer<Channel> getWebSocketChannelInitializer() {
+        return webSocketChannelInitializer;
+    }
+
+    public void setWebSocketChannelInitializer(ChannelInitializer<Channel> webSocketChannelInitializer) {
+        this.webSocketChannelInitializer = webSocketChannelInitializer;
+    }
+
+    public ChannelInitializer<Channel> getHttpsChannelInitializer() {
+        return httpsChannelInitializer;
+    }
+
+    public void setHttpsChannelInitializer(ChannelInitializer<Channel> httpsChannelInitializer) {
+        this.httpsChannelInitializer = httpsChannelInitializer;
+    }
+
+    public ChannelInitializer<Channel> getWebsocketSecureChannelInitializer() {
+        return websocketSecureChannelInitializer;
+    }
+
+    public void setWebsocketSecureChannelInitializer(ChannelInitializer<Channel> websocketSecureChannelInitializer) {
+        this.websocketSecureChannelInitializer = websocketSecureChannelInitializer;
     }
 }

@@ -20,7 +20,6 @@ import io.netty.handler.codec.http.HttpHeaders;
 import java.net.URI;
 import java.util.Map;
 
-import org.asynchttpclient.AsyncHttpProvider;
 import org.asynchttpclient.FluentCaseInsensitiveStringsMap;
 import org.asynchttpclient.HttpResponseHeaders;
 
@@ -33,15 +32,14 @@ public class ResponseHeaders extends HttpResponseHeaders {
     private final HttpHeaders trailingHeaders;
     private final FluentCaseInsensitiveStringsMap headers;
 
-    public ResponseHeaders(URI uri, HttpHeaders responseHeaders, AsyncHttpProvider provider) {
-        super(uri, provider, false);
-        this.responseHeaders = responseHeaders;
-        this.trailingHeaders = null;
-        headers = computerHeaders();
+    // FIXME unused AsyncHttpProvider provider
+    public ResponseHeaders(URI uri, HttpHeaders responseHeaders) {
+        this(uri, responseHeaders, null);
     }
 
-    public ResponseHeaders(URI uri,HttpHeaders responseHeaders, AsyncHttpProvider provider, HttpHeaders traillingHeaders) {
-        super(uri, provider, true);
+    // FIXME unused AsyncHttpProvider provider
+    public ResponseHeaders(URI uri,HttpHeaders responseHeaders, HttpHeaders traillingHeaders) {
+        super(uri, null, traillingHeaders != null);
         this.responseHeaders = responseHeaders;
         this.trailingHeaders = traillingHeaders;
         headers = computerHeaders();

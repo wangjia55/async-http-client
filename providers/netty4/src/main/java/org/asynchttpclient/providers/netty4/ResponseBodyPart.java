@@ -25,7 +25,6 @@ import java.io.OutputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
 
-import org.asynchttpclient.AsyncHttpProvider;
 import org.asynchttpclient.HttpResponseBodyPart;
 import org.asynchttpclient.providers.netty4.util.ByteBufUtil;
 
@@ -38,8 +37,9 @@ public class ResponseBodyPart extends HttpResponseBodyPart {
     private final boolean isLast;
     private boolean closeConnection = false;
 
-    public ResponseBodyPart(URI uri, AsyncHttpProvider provider, HttpContent chunk) {
-        super(uri, provider);
+    // FIXME unused AsyncHttpProvider provider
+    public ResponseBodyPart(URI uri, HttpContent chunk) {
+        super(uri, null);
         bytes = ByteBufUtil.byteBuf2bytes(chunk.content());
         isLast = chunk instanceof LastHttpContent;
     }

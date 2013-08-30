@@ -55,6 +55,7 @@ import java.io.IOException;
  * @since 4.1
  */
 public class SpnegoEngine {
+
     private static final String SPNEGO_OID = "1.3.6.1.5.5.2";
     private static final String KERBEROS_OID = "1.2.840.113554.1.2.2";
 
@@ -68,6 +69,13 @@ public class SpnegoEngine {
 
     public SpnegoEngine() {
         this(null);
+    }
+    
+    private static SpnegoEngine instance;
+    public static SpnegoEngine instance() {
+        if (instance == null)
+            instance = new SpnegoEngine();
+        return instance;
     }
 
     public String generateToken(String server) throws Throwable {
